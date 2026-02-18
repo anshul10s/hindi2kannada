@@ -1,10 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { BookOpen, PenTool, ChevronLeft, RefreshCw, Home, Info, Sparkles, Loader2, Star, Check, AlertCircle, Split, Trophy, CheckCircle2, Brain, Quote, Gamepad2, ArrowRight } from 'lucide-react';
-import charData from './data/charData';
-import WritingPad from './components/WritingPad';
-import CharacterCard from './components/CharacterCard';
-import { initFirebase, subscribeProgress, toggleProgress } from './firebase';
-import { callGeminiVision, callGeminiTutor, callGeminiSimilar, callGeminiQuiz, callGeminiUsage } from './api/gemini';
+import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef } from 'react';
+import { BookOpen, PenTool, ChevronLeft, RefreshCw, Eraser, Home, Info, MousePointer2, Sparkles, Loader2, Star, Check, AlertCircle, Split, Trophy, CheckCircle2, Brain, Quote, Gamepad2, ArrowRight } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from 'firebase/app';
@@ -12,14 +7,380 @@ import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged }
 import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc } from 'firebase/firestore';
 
 // --- GEMINI API UTILS ---
-// Implementations are provided in ./api/gemini and imported at the top of this file.
+const apiKey = ""; // System provides key
+
+const callGeminiVision = async (base64Image, charData) => {
+  const prompt = `I am a student learning Kannada from Hindi. I just wrote the Kannada character '${charData.kannada}' (which maps to Hindi '${charData.hindi}'). 
+  Look at my handwriting in the image.
+  1. Rate my accuracy from 1 to 5 stars (be encouraging but honest).
+  2. Give me one specific tip to improve the shape or stroke.
+  3. Keep the response very short (max 2 sentences).
+  Output JSON format: { "rating": number, "feedback": "string" }`;
+
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            { text: prompt },
+            { inlineData: { mimeType: "image/png", data: base64Image } }
+          ]
+        }],
+        generationConfig: { responseMimeType: "application/json" }
+      })
+    });
+    
+    if (!response.ok) throw new Error(`API Error: ${response.status}`);
+    const data = await response.json();
+    return JSON.parse(data.candidates[0].content.parts[0].text);
+  } catch (error) {
+    console.error("Vision Error:", error);
+    throw error;
+  }
+};
+
+const callGeminiTutor = async (charData) => {
+  const prompt = `I am learning the Kannada character '${charData.kannada}' (Hindi: '${charData.hindi}').
+  1. Give me a creative visual mnemonic to remember its shape (e.g., "It looks like a curled snake").
+  2. Give me 2 simple Kannada words starting with this letter.
+  For each word provide:
+  - "kannada": The word in Kannada script.
+  - "meaning": The meaning in Hindi.
+  - "english_pronunciation": How to pronounce the Kannada word written in English letters.
+  - "hindi_pronunciation": How to pronounce the Kannada word written in Hindi letters.
+  Output JSON format: { "mnemonic": "string", "words": [{ "kannada": "string", "meaning": "string", "english_pronunciation": "string", "hindi_pronunciation": "string" }] }`;
+
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { responseMimeType: "application/json" }
+      })
+    });
+
+    if (!response.ok) throw new Error(`API Error: ${response.status}`);
+    const data = await response.json();
+    return JSON.parse(data.candidates[0].content.parts[0].text);
+  } catch (error) {
+    console.error("Text Error:", error);
+    throw error;
+  }
+};
+
+const callGeminiSimilar = async (charData) => {
+  const prompt = `I am learning the Kannada character '${charData.kannada}'.
+  1. Identify ONE other Kannada character that looks **VISUALLY** similar to it (a "confusing pair").
+  - **IMPORTANT**: Focus strictly on SHAPE similarity, NOT phonetic similarity. 
+  - Do NOT compare 'ಇ' with 'ಈ' as they look very different.
+  - Good examples: 'ವ' vs 'ಮ', 'ಪ' vs 'ಷ', 'ಬ' vs 'ಒ'.
+  2. Explain the main visual difference between them in a simple sentence.
+  3. If there are no very similar characters, compare it to the character it is most often confused with by beginners due to stroke style.
+  Output JSON format: { "similar_char": "string", "difference": "string" }`;
+
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { responseMimeType: "application/json" }
+      })
+    });
+
+    if (!response.ok) throw new Error(`API Error: ${response.status}`);
+    const data = await response.json();
+    return JSON.parse(data.candidates[0].content.parts[0].text);
+  } catch (error) {
+    console.error("Similar Error:", error);
+    throw error;
+  }
+};
+
+const callGeminiQuiz = async (charData) => {
+  const prompt = `Create a single multiple-choice question to test a beginner's knowledge of the Kannada character '${charData.kannada}' (Hindi: '${charData.hindi}').
+  The question could be about recognizing the shape, the sound, or a simple word.
+  Output JSON format: { "question": "string", "options": ["string", "string", "string", "string"], "correctIndex": number, "explanation": "string" }`;
+
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { responseMimeType: "application/json" }
+      })
+    });
+
+    if (!response.ok) throw new Error(`API Error: ${response.status}`);
+    const data = await response.json();
+    return JSON.parse(data.candidates[0].content.parts[0].text);
+  } catch (error) {
+    console.error("Quiz Error:", error);
+    throw error;
+  }
+};
+
+const callGeminiUsage = async (charData) => {
+  const prompt = `Generate a very simple Kannada sentence using a common word that starts with the character '${charData.kannada}' (${charData.trans}).
+  Output JSON format: { "sentence": "string", "transliteration": "string", "hindi_translation": "string", "word_used": "string" }`;
+
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { responseMimeType: "application/json" }
+      })
+    });
+
+    if (!response.ok) throw new Error(`API Error: ${response.status}`);
+    const data = await response.json();
+    return JSON.parse(data.candidates[0].content.parts[0].text);
+  } catch (error) {
+    console.error("Usage Error:", error);
+    throw error;
+  }
+};
 
 
-// charData moved to ./data/charData.js
+// --- DATASET: Hindi to Kannada Mapping ---
+const charData = [
+  // Vowels (Swar)
+  { id: 'v1', hindi: 'अ', kannada: 'ಅ', trans: 'a', type: 'vowel' },
+  { id: 'v2', hindi: 'आ', kannada: 'ಆ', trans: 'aa', type: 'vowel' },
+  { id: 'v3', hindi: 'इ', kannada: 'ಇ', trans: 'i', type: 'vowel' },
+  { id: 'v4', hindi: 'ई', kannada: 'ಈ', trans: 'ii', type: 'vowel' },
+  { id: 'v5', hindi: 'उ', kannada: 'ಉ', trans: 'u', type: 'vowel' },
+  { id: 'v6', hindi: 'ऊ', kannada: 'ಊ', trans: 'uu', type: 'vowel' },
+  { id: 'v7', hindi: 'ऋ', kannada: 'ಋ', trans: 'ru', type: 'vowel' },
+  { id: 'v8', hindi: 'ए', kannada: 'ಎ', trans: 'e', type: 'vowel' },
+  { id: 'v9', hindi: 'ऐ', kannada: 'ಏ', trans: 'ee', type: 'vowel' },
+  { id: 'v10', hindi: 'ऐ', kannada: 'ಐ', trans: 'ai', type: 'vowel' },
+  { id: 'v11', hindi: 'ओ', kannada: 'ಒ', trans: 'o', type: 'vowel' },
+  { id: 'v12', hindi: 'औ', kannada: 'ಓ', trans: 'oo', type: 'vowel' },
+  { id: 'v13', hindi: 'औ', kannada: 'ಔ', trans: 'au', type: 'vowel' },
+  { id: 'v14', hindi: 'अं', kannada: 'ಅಂ', trans: 'am', type: 'vowel' },
+  { id: 'v15', hindi: 'अः', kannada: 'ಅಃ', trans: 'ah', type: 'vowel' },
+
+  // Consonants (Vyanjan) - Ka Varga
+  { id: 'c1', hindi: 'क', kannada: 'ಕ', trans: 'ka', type: 'consonant' },
+  { id: 'c2', hindi: 'ख', kannada: 'ಖ', trans: 'kha', type: 'consonant' },
+  { id: 'c3', hindi: 'ग', kannada: 'ಗ', trans: 'ga', type: 'consonant' },
+  { id: 'c4', hindi: 'घ', kannada: 'ಘ', trans: 'gha', type: 'consonant' },
+  { id: 'c5', hindi: 'ङ', kannada: 'ಙ', trans: 'nga', type: 'consonant' },
+
+  // Cha Varga
+  { id: 'c6', hindi: 'च', kannada: 'ಚ', trans: 'cha', type: 'consonant' },
+  { id: 'c7', hindi: 'छ', kannada: 'ಛ', trans: 'chha', type: 'consonant' },
+  { id: 'c8', hindi: 'ज', kannada: 'ಜ', trans: 'ja', type: 'consonant' },
+  { id: 'c9', hindi: 'झ', kannada: 'ಝ', trans: 'jha', type: 'consonant' },
+  { id: 'c10', hindi: 'ञ', kannada: 'ಞ', trans: 'nya', type: 'consonant' },
+
+  // Ta Varga (Retroflex)
+  { id: 'c11', hindi: 'ट', kannada: 'ಟ', trans: 'ta', type: 'consonant' },
+  { id: 'c12', hindi: 'ठ', kannada: 'ಠ', trans: 'tha', type: 'consonant' },
+  { id: 'c13', hindi: 'ड', kannada: 'ಡ', trans: 'da', type: 'consonant' },
+  { id: 'c14', hindi: 'ढ', kannada: 'ಢ', trans: 'dha', type: 'consonant' },
+  { id: 'c15', hindi: 'ण', kannada: 'ಣ', trans: 'na', type: 'consonant' },
+
+  // Ta Varga (Dental)
+  { id: 'c16', hindi: 'त', kannada: 'ತ', trans: 'ta', type: 'consonant' },
+  { id: 'c17', hindi: 'थ', kannada: 'ಥ', trans: 'tha', type: 'consonant' },
+  { id: 'c18', hindi: 'द', kannada: 'ದ', trans: 'da', type: 'consonant' },
+  { id: 'c19', hindi: 'ध', kannada: 'ಧ', trans: 'dha', type: 'consonant' },
+  { id: 'c20', hindi: 'न', kannada: 'ನ', trans: 'na', type: 'consonant' },
+
+  // Pa Varga
+  { id: 'c21', hindi: 'प', kannada: 'ಪ', trans: 'pa', type: 'consonant' },
+  { id: 'c22', hindi: 'फ', kannada: 'ಫ', trans: 'pha', type: 'consonant' },
+  { id: 'c23', hindi: 'ब', kannada: 'ಬ', trans: 'ba', type: 'consonant' },
+  { id: 'c24', hindi: 'भ', kannada: 'ಭ', trans: 'bha', type: 'consonant' },
+  { id: 'c25', hindi: 'म', kannada: 'ಮ', trans: 'ma', type: 'consonant' },
+
+  // Ya Raa La Va ...
+  { id: 'c26', hindi: 'य', kannada: 'ಯ', trans: 'ya', type: 'consonant' },
+  { id: 'c27', hindi: 'र', kannada: 'ರ', trans: 'ra', type: 'consonant' },
+  { id: 'c28', hindi: 'ल', kannada: 'ಲ', trans: 'la', type: 'consonant' },
+  { id: 'c29', hindi: 'व', kannada: 'ವ', trans: 'va', type: 'consonant' },
+  { id: 'c30', hindi: 'श', kannada: 'ಶ', trans: 'sha', type: 'consonant' },
+  { id: 'c31', hindi: 'ष', kannada: 'ಷ', trans: 'sha', type: 'consonant' },
+  { id: 'c32', hindi: 'स', kannada: 'ಸ', trans: 'sa', type: 'consonant' },
+  { id: 'c33', hindi: 'ह', kannada: 'ಹ', trans: 'ha', type: 'consonant' },
+  { id: 'c34', hindi: 'ळ', kannada: 'ಳ', trans: 'la', type: 'consonant' },
+];
 
 // --- COMPONENTS ---
 
-// WritingPad and CharacterCard moved to ./components
+const WritingPad = forwardRef(({ character, onClear }, ref) => {
+  const canvasRef = useRef(null);
+  const containerRef = useRef(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+
+  useImperativeHandle(ref, () => ({
+    getCanvasImage: () => {
+      const canvas = canvasRef.current;
+      if (!canvas) return null;
+      
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = canvas.width;
+      tempCanvas.height = canvas.height;
+      const tCtx = tempCanvas.getContext('2d');
+      
+      tCtx.fillStyle = '#ffffff';
+      tCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+      tCtx.drawImage(canvas, 0, 0);
+      
+      return tempCanvas.toDataURL('image/png').split(',')[1];
+    }
+  }));
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    
+    if (!canvas || !container) return;
+
+    // Use ResizeObserver to reliably set canvas size even during/after animations
+    const resizeObserver = new ResizeObserver(() => {
+        const dpr = window.devicePixelRatio || 1;
+        const rect = container.getBoundingClientRect();
+
+        // Only update if dimensions are valid to prevent 0x0 issues
+        if (rect.width > 0 && rect.height > 0) {
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+
+            const ctx = canvas.getContext('2d');
+            ctx.scale(dpr, dpr);
+            
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.strokeStyle = '#2563eb';
+            ctx.lineWidth = 12; 
+            
+            canvas.style.width = `${rect.width}px`;
+            canvas.style.height = `${rect.height}px`;
+        }
+    });
+
+    resizeObserver.observe(container);
+
+    return () => resizeObserver.disconnect();
+  }, [character]); 
+
+  const getCoordinates = (e) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    
+    const rect = canvas.getBoundingClientRect();
+    const clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
+    const clientY = e.type.includes('touch') ? e.touches[0].clientY : e.clientY;
+
+    return {
+      x: clientX - rect.left,
+      y: clientY - rect.top
+    };
+  };
+
+  const startDrawing = (e) => {
+    e.preventDefault(); 
+    const ctx = canvasRef.current.getContext('2d');
+    const { x, y } = getCoordinates(e);
+
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    setIsDrawing(true);
+  };
+
+  const draw = (e) => {
+    if (!isDrawing) return;
+    e.preventDefault(); 
+    
+    const ctx = canvasRef.current.getContext('2d');
+    const { x, y } = getCoordinates(e);
+
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  };
+
+  const stopDrawing = () => {
+    setIsDrawing(false);
+    const ctx = canvasRef.current.getContext('2d');
+    ctx.closePath();
+  };
+
+  const clearCanvas = () => {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height); 
+    if(onClear) onClear();
+  };
+
+  return (
+    <div className="flex flex-col items-center gap-4">
+      <div 
+        ref={containerRef}
+        className="relative w-72 h-72 sm:w-80 sm:h-80 bg-white rounded-3xl shadow-inner border border-slate-200 overflow-hidden select-none"
+      >
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <span className="text-9xl text-slate-200 font-bold opacity-80" style={{ fontSize: '180px', fontFamily: 'serif' }}>
+            {character}
+          </span>
+        </div>
+        
+        <canvas
+          ref={canvasRef}
+          onMouseDown={startDrawing}
+          onMouseMove={draw}
+          onMouseUp={stopDrawing}
+          onMouseLeave={stopDrawing}
+          onTouchStart={startDrawing}
+          onTouchMove={draw}
+          onTouchEnd={stopDrawing}
+          className="absolute inset-0 w-full h-full cursor-crosshair touch-none z-10"
+        />
+      </div>
+
+      <button 
+        onClick={clearCanvas}
+        className="flex items-center gap-2 px-6 py-2 bg-slate-800 text-white rounded-full hover:bg-slate-700 transition-colors text-sm font-medium shadow-lg shadow-slate-200"
+      >
+        <Eraser size={16} />
+        Clear Board
+      </button>
+    </div>
+  );
+});
+
+const CharacterCard = ({ data, onClick, isCompleted }) => (
+  <button 
+    onClick={() => onClick(data)}
+    className={`flex flex-col items-center justify-center p-4 rounded-xl shadow-sm border transition-all duration-200 group relative ${isCompleted ? 'bg-green-50 border-green-200' : 'bg-white border-slate-100 hover:shadow-md hover:border-indigo-200'}`}
+  >
+    <div className="flex items-baseline gap-2 mb-2">
+      <span className="text-xl text-slate-400 font-medium">{data.hindi}</span>
+      <span className={`text-3xl font-bold group-hover:text-indigo-600 ${isCompleted ? 'text-green-700' : 'text-slate-800'}`}>{data.kannada}</span>
+    </div>
+    <span className="text-xs text-slate-500 font-mono bg-white/50 px-2 py-0.5 rounded">{data.trans}</span>
+    
+    {isCompleted && (
+       <div className="absolute top-2 right-2">
+         <CheckCircle2 size={16} className="text-green-500 fill-green-100" />
+       </div>
+    )}
+    
+    {!isCompleted && (
+        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+           <MousePointer2 size={12} className="text-indigo-400" />
+        </div>
+    )}
+  </button>
+);
 
 export default function App() {
   const [view, setView] = useState('home'); 
@@ -46,32 +407,81 @@ export default function App() {
   const [completedChars, setCompletedChars] = useState({});
   const [cache, setCache] = useState({ tutor: {}, similar: {}, quiz: {}, usage: {} });
 
-  // --- FIREBASE INIT & SYNC ---
-  const dbRef = useRef(null);
-
+  // --- FIREBASE INIT ---
   useEffect(() => {
-    if (typeof __firebase_config === 'undefined') return;
-    const { db, unsubscribeAuth } = initFirebase(__firebase_config, typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null, (currentUser) => {
+    // Try multiple locations for the firebase config string/object.
+    const rawConfig = (typeof __firebase_config !== 'undefined' && __firebase_config)
+      || import.meta.env.VITE_FIREBASE_CONFIG
+      || (typeof window !== 'undefined' && window.__firebase_config)
+      || null;
+
+    if (!rawConfig) {
+      console.warn('Firebase config not provided. Skipping Firebase initialization.');
+      return;
+    }
+
+    let firebaseConfig;
+    try {
+      firebaseConfig = typeof rawConfig === 'string' ? JSON.parse(rawConfig) : rawConfig;
+    } catch (e) {
+      console.error('Failed to parse firebase config:', e);
+      return;
+    }
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    
+    const initAuth = async () => {
+      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+        await signInWithCustomToken(auth, __initial_auth_token);
+      } else {
+        await signInAnonymously(auth);
+      }
+    };
+    
+    initAuth();
+    
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
     });
-    dbRef.current = db;
 
-    return () => unsubscribeAuth && unsubscribeAuth();
+    return () => unsubscribe();
   }, []);
 
+  // --- FIREBASE SYNC ---
   useEffect(() => {
-    if (!user || !dbRef.current) return;
+    if (!user) return;
+    const db = getFirestore();
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-    const unsubscribe = subscribeProgress(dbRef.current, user, appId, (progress) => setCompletedChars(progress));
-    return () => unsubscribe && unsubscribe();
+    
+    const q = collection(db, 'artifacts', appId, 'users', user.uid, 'progress');
+    
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const progress = {};
+      snapshot.forEach(doc => {
+        progress[doc.id] = true;
+      });
+      setCompletedChars(progress);
+    }, (err) => console.error("Sync error:", err));
+
+    return () => unsubscribe();
   }, [user]);
 
   const toggleComplete = async () => {
-    if (!user || !selectedChar || !dbRef.current) return;
+    if (!user || !selectedChar) return;
+    const db = getFirestore();
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
     const charId = selectedChar.id;
-    const isCompleted = !!completedChars[charId];
-    await toggleProgress(dbRef.current, user, appId, charId, !isCompleted);
+    const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'progress', charId);
+
+    if (completedChars[charId]) {
+      await deleteDoc(docRef);
+    } else {
+      await setDoc(docRef, { 
+        learned: true,
+        updatedAt: new Date().toISOString()
+      });
+    }
   };
 
 
