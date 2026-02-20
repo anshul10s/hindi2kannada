@@ -12,7 +12,9 @@ import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged }
 import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, getDoc } from 'firebase/firestore';
 
 // --- GEMINI API UTILS ---
-const apiKey = ""; 
+// Read API key from Vite env or window/global
+const apiKey = typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_GEMINI_API_KEY
+  || '';
 
 const base64ToArrayBuffer = (base64) => {
   const binaryString = window.atob(base64);
