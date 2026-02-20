@@ -83,7 +83,7 @@ const callGeminiAudio = async (kannadaChar, retryCount = 0) => {
 const callGeminiStory = async (charData) => {
   const prompt = `Write a short 2-sentence story for kids using character '${charData.kannada}'. Output JSON format: { 
     "kannada_story": "string", 
-    "hindi_script_story": "string (PHONETIC sound of the story in Hindi Devanagari script. DO NOT TRANSLATE, only show how it sounds)", 
+    "hindi_script_story": "string (PHONETIC sound of the story in Hindi script, NOT translation)", 
     "hindi_translation": "string (Actual meaning in Hindi language)" 
   }`;
   const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
@@ -205,7 +205,7 @@ const charData = [
   { id: 'c31', hindi: 'ष', kannada: 'ಷ', trans: 'sha', type: 'consonant', subgroup: 'Misc (अन्य)' },
   { id: 'c32', hindi: 'स', kannada: 'ಸ', trans: 'sa', type: 'consonant', subgroup: 'Misc (अन्य)' },
   { id: 'c33', hindi: 'ह', kannada: 'ಹ', trans: 'ha', type: 'consonant', subgroup: 'Misc (अन्य)' },
-  { id: 'c34', hindi: 'ಳ', kannada: 'ಳ', trans: 'la', type: 'consonant', subgroup: 'Misc (अन्य)' },
+  { id: 'c34', hindi: 'ळ', kannada: 'ಳ', trans: 'la', type: 'consonant', subgroup: 'Misc (अन्य)' },
 ];
 
 // --- COMPONENTS ---
@@ -252,7 +252,7 @@ const WritingPad = forwardRef(({ character, onClear, theme }, ref) => {
 
   const start = (e) => {
     e.preventDefault(); if (!canvasRef.current) return;
-    triggerHaptic(15); // Tiny haptic on start drawing
+    triggerHaptic(15); 
     const r = canvasRef.current.getBoundingClientRect();
     const x = (e.type.includes('touch') ? e.touches[0].clientX : e.clientX) - r.left;
     const y = (e.type.includes('touch') ? e.touches[0].clientY : e.clientY) - r.top;
@@ -283,22 +283,24 @@ const WritingPad = forwardRef(({ character, onClear, theme }, ref) => {
 });
 
 const CharacterCard = ({ data, onClick, isCompleted, theme }) => (
-  <button onClick={() => onClick(data)} className={`flex flex-col items-center justify-center p-3 sm:p-4 rounded-xl shadow-sm border-2 transition-all group relative ${isCompleted ? (theme === 'dark' ? 'bg-green-900/20 border-green-800' : 'bg-green-50 border-green-200') : (theme === 'dark' ? 'bg-slate-800 border-slate-700 hover:border-indigo-500' : 'bg-white border-slate-100 hover:border-indigo-300')}`}>
+  <button onClick={() => onClick(data)} className={`flex flex-col items-center justify-center p-2 sm:p-5 rounded-3xl shadow-sm border-2 transition-all group relative ${isCompleted ? (theme === 'dark' ? 'bg-green-900/20 border-green-800' : 'bg-green-50 border-green-200') : (theme === 'dark' ? 'bg-slate-800 border-slate-700 hover:border-indigo-500' : 'bg-white border-slate-100 hover:border-indigo-300')}`}>
     <div className="flex flex-col items-center w-full">
-      <div className="flex items-baseline justify-center gap-2 mb-1 w-full">
-        <span className={`text-base sm:text-lg font-medium ${theme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`}>{data.hindi}</span>
-        <span className={`text-2xl sm:text-3xl font-bold group-hover:text-indigo-400 ${isCompleted ? 'text-green-500' : (theme === 'dark' ? 'text-slate-200' : 'text-slate-800')}`}>{data.kannada}</span>
-      </div>
-      <div className="flex items-center justify-center gap-1 relative">
-         <span className={`text-[10px] sm:text-xs font-mono font-bold ${theme === 'dark' ? 'text-slate-600' : 'text-slate-400'}`}>/{data.trans}/</span>
-         {data.vowelType && (
-            <span className={`text-[8px] font-black uppercase ${data.vowelType === 'Short' ? 'text-indigo-400' : 'text-amber-500'}`}>
+      {/* COMPACT SIDE-BY-SIDE HINDI AND KANNADA */}
+      <div className="flex items-center justify-center gap-3 sm:gap-6 mb-1">
+        <span className={`text-lg sm:text-2xl font-serif font-medium ${theme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`}>{data.hindi}</span>
+        <div className="relative">
+          <span className={`text-3xl sm:text-5xl font-black group-hover:text-indigo-400 ${isCompleted ? 'text-green-700' : (theme === 'dark' ? 'text-slate-200' : 'text-slate-800')}`}>{data.kannada}</span>
+          {data.vowelType && (
+            <span className={`absolute -top-2 -right-3 text-[9px] font-black uppercase text-indigo-500 tracking-tighter`}>
                 {data.vowelType === 'Short' ? '1●' : '2●'}
             </span>
           )}
+        </div>
       </div>
+      {/* CENTERED ENGLISH BELOW */}
+      <span className={`text-[10px] sm:text-xs font-mono font-bold tracking-widest ${theme === 'dark' ? 'text-slate-600' : 'text-slate-400'}`}>/{data.trans}/</span>
     </div>
-    {isCompleted && <div className="absolute top-1 right-1"><CheckCircle2 size={12} className="text-green-500 fill-green-100" /></div>}
+    {isCompleted && <div className="absolute top-2 right-2"><CheckCircle2 size={14} className="text-green-600 fill-green-100" /></div>}
   </button>
 );
 
@@ -326,27 +328,24 @@ export default function App() {
   const padRef = useRef(null);
   const resultRef = useRef(null);
 
+  // --- DERIVED VARIABLES FOR NAVIGATION ---
+  const currentList = category ? charData.filter(c => c.type === category) : charData;
+  const currentIndex = selectedChar ? currentList.findIndex(c => c.id === selectedChar.id) : -1;
+  const prevCharData = currentIndex > 0 ? currentList[currentIndex - 1] : null;
+  const nextCharData = currentIndex < currentList.length - 1 ? currentList[currentIndex + 1] : null;
+
   useEffect(() => {
-    if (typeof __firebase_config === 'undefined' || !__firebase_config) {
-      console.error("Firebase configuration is missing.");
-      return;
-    }
+    if (typeof __firebase_config === 'undefined' || !__firebase_config) return;
     try {
       const config = JSON.parse(__firebase_config);
       const app = initializeApp(config);
       const auth = getAuth(app);
       const init = async () => { 
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token); 
-        } else {
-          await signInAnonymously(auth); 
-        }
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token); 
+        else await signInAnonymously(auth); 
       };
-      init(); 
-      onAuthStateChanged(auth, setUser);
-    } catch (err) {
-      console.error("Firebase initialization failed:", err);
-    }
+      init(); onAuthStateChanged(auth, setUser);
+    } catch (err) { console.error("Firebase init failed:", err); }
   }, []);
 
   useEffect(() => {
@@ -408,21 +407,14 @@ export default function App() {
     else await setDoc(docRef, { learned: true, updatedAt: new Date().toISOString() });
   };
 
-  // --- PUZZLE LOGIC ---
   const startNewPuzzleRound = () => {
     const shuffled = [...charData].sort(() => Math.random() - 0.5);
-    setPuzzleQueue(shuffled);
-    generatePuzzle(shuffled);
-    setView('puzzle');
+    setPuzzleQueue(shuffled); generatePuzzle(shuffled); setView('puzzle');
   };
 
   const generatePuzzle = (currentQueue = puzzleQueue) => {
-    if (currentQueue.length === 0) {
-        setPuzzleState(p => ({ ...p, isComplete: true }));
-        return;
-    }
-    const t = currentQueue[0];
-    const newQueue = currentQueue.slice(1);
+    if (currentQueue.length === 0) { setPuzzleState(p => ({ ...p, isComplete: true })); return; }
+    const t = currentQueue[0]; const newQueue = currentQueue.slice(1);
     setPuzzleQueue(newQueue);
     let opts = [t];
     while(opts.length < 4) {
@@ -434,32 +426,26 @@ export default function App() {
 
   const handlePuzzleGuess = (option) => {
     if (option.id === puzzleState.target.id) {
-        triggerHaptic(50); // Firm pulse for success
+        triggerHaptic(50);
         setPuzzleStats(prev => ({
-            ...prev,
-            score: prev.score + 2,
+            ...prev, score: prev.score + 2,
             perfectGuesses: prev.perfectGuesses + (puzzleState.isFirstAttempt ? 1 : 0),
             streak: prev.streak + 1
         }));
         setPuzzleState(prev => ({ ...prev, isSolved: true }));
     } else {
-        triggerHaptic([100, 50, 100]); // Double pulse for error
+        triggerHaptic([100, 50, 100]);
         setPuzzleStats(prev => ({ ...prev, score: Math.max(0, prev.score - 1), streak: 0 }));
         setPuzzleState(prev => ({ ...prev, wrongIds: [...prev.wrongIds, option.id], isFirstAttempt: false }));
     }
   };
-
-  const currentList = category ? charData.filter(c => c.type === category) : charData;
-  const currentIndex = selectedChar ? currentList.findIndex(c => c.id === selectedChar.id) : -1;
-  const prevCharData = currentIndex > 0 ? currentList[currentIndex - 1] : null;
-  const nextCharData = currentIndex < currentList.length - 1 ? currentList[currentIndex + 1] : null;
 
   return (
     <div className={`min-h-screen font-sans transition-colors duration-300 flex flex-col ${theme === 'dark' ? 'bg-slate-900 text-slate-100' : 'bg-slate-50 text-slate-800'}`}>
       <header className={`sticky top-0 z-30 shadow-sm px-4 h-16 flex items-center justify-between flex-none border-b ${theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
         <div className="flex items-center gap-2">
           {view !== 'home' && <button onClick={() => setView(view === 'list' ? 'home' : 'list')} className="p-2 hover:bg-slate-700/50 rounded-full transition-colors"><ChevronLeft size={24} /></button>}
-          <h1 className="text-lg sm:text-xl font-bold bg-gradient-to-r from-indigo-500 to-violet-400 bg-clip-text text-transparent">Akshara Setu</h1>
+          <h1 className="text-lg sm:text-xl font-bold bg-gradient-to-r from-indigo-500 to-violet-400 bg-clip-text text-transparent tracking-tight">Akshara Setu</h1>
         </div>
         <div className="flex items-center gap-1 sm:gap-2">
           {view === 'practice' && selectedChar && (
@@ -475,7 +461,7 @@ export default function App() {
         </div>
       </header>
 
-      <main className="max-w-3xl mx-auto w-full px-4 py-4 flex-1 overflow-y-auto">
+      <main className="max-w-3xl mx-auto w-full px-3 py-4 flex-1 overflow-y-auto">
         {view === 'home' && (
           <div className="space-y-4 sm:space-y-6 animate-in fade-in duration-300 pb-12">
             <div className={`p-4 sm:p-6 rounded-2xl shadow-sm border-2 flex items-center gap-4 sm:gap-5 ${theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
@@ -515,9 +501,9 @@ export default function App() {
         {view === 'list' && (
           <div className="space-y-4 animate-in slide-in-from-right-4 duration-300 pb-12">
             {Object.entries(getGroupedChars()).map(([sub, items]) => (
-              <div key={sub} className="space-y-3">
+              <div key={sub} className="space-y-4">
                 <h3 className={`text-[10px] sm:text-xs font-bold uppercase tracking-widest pl-2 ${theme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`}>{sub}</h3>
-                <div className="grid grid-cols-4 sm:grid-cols-5 gap-2 sm:gap-3">
+                <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3 sm:gap-4">
                   {items.map(c => <CharacterCard key={c.id} data={c} onClick={handleCharSelect} isCompleted={!!completedChars[c.id]} theme={theme} />)}
                 </div>
               </div>
@@ -575,7 +561,7 @@ export default function App() {
                   { id: 'quiz', icon: <Brain size={18} />, label: 'Quiz', fn: () => run('quiz', callGeminiQuiz) },
                   { id: 'feedback', icon: <Check size={18} />, label: 'Verify', fn: async () => run('feedback', () => callGeminiVision(padRef.current.getCanvasImage(), selectedChar)) }
                 ].map(tool => (
-                  <button key={tool.id} onClick={tool.fn} className={`flex flex-col items-center justify-center py-3 rounded-2xl border-2 transition-all active:scale-95 ${activeFeature === tool.id ? 'bg-indigo-500 border-indigo-400 text-white shadow-xl' : (theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-400 hover:border-indigo-500' : 'bg-white border-slate-100 text-slate-500 hover:border-indigo-300 shadow-sm')}`}>
+                  <button key={tool.id} onClick={tool.fn} className={`flex flex-col items-center justify-center py-3 rounded-2xl border-2 transition-all active:scale-95 ${activeFeature === tool.id ? 'bg-indigo-50 border-indigo-400 text-white shadow-xl' : (theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-400 hover:border-indigo-500' : 'bg-white border-slate-100 text-slate-500 hover:border-indigo-300 shadow-sm')}`}>
                     {tool.icon}<span className="text-[8px] font-black mt-1 uppercase tracking-tighter">{tool.label}</span>
                   </button>
                 ))}
@@ -590,7 +576,7 @@ export default function App() {
                      <div className="text-center p-2 space-y-4 sm:space-y-6">
                         <p className="text-2xl sm:text-3xl font-serif text-indigo-500 font-black leading-tight">{aiData.usage.sentence}</p>
                         <div className={`p-4 sm:p-6 rounded-[2rem] border-2 shadow-inner ${theme === 'dark' ? 'bg-slate-900/50 border-slate-700' : 'bg-slate-50 border-indigo-100'}`}>
-                          <p className="text-[9px] sm:text-[10px] font-bold text-indigo-500 uppercase tracking-widest mb-2 sm:mb-3">Phonetic Sounds (Devanagari)</p>
+                          <p className="text-[9px] sm:text-[10px] font-bold text-indigo-500 uppercase tracking-widest mb-2 sm:mb-3">Phonetic Guide (How it sounds)</p>
                           <p className={`text-3xl sm:text-4xl font-black leading-relaxed ${theme === 'dark' ? 'text-white' : 'text-slate-950'}`}>{aiData.usage.hindi_script_representation}</p>
                         </div>
                         <div className={`p-4 rounded-2xl border-2 ${theme === 'dark' ? 'bg-indigo-900/20 border-indigo-800' : 'bg-cyan-50 border-cyan-100'}`}>
@@ -612,15 +598,6 @@ export default function App() {
                        </div>
                      </div>
                    )}
-                   {activeFeature === 'story' && aiData.story && (
-                     <div className="text-center p-2 space-y-4">
-                        <p className="text-xl sm:text-2xl font-serif text-slate-800 font-black leading-relaxed dark:text-slate-200">{aiData.story.kannada_story}</p>
-                        <div className="p-4 sm:p-6 bg-violet-50 rounded-2xl border-2 border-violet-100 shadow-inner dark:bg-slate-900/50 dark:border-slate-700">
-                          <p className="text-2xl sm:text-3xl text-slate-900 font-black leading-relaxed dark:text-white">{aiData.story.hindi_script_story}</p>
-                        </div>
-                        <p className="text-base sm:text-xl text-slate-900 font-bold italic dark:text-slate-400">अर्थ: {aiData.story.hindi_translation}</p>
-                     </div>
-                   )}
                 </div>
               )}
             </div>
@@ -628,19 +605,16 @@ export default function App() {
         )}
 
         {view === 'puzzle' && (
-          <div className="max-w-md mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 pb-20 pt-2 flex flex-col items-center">
+          <div className="max-w-md mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 pb-32 pt-2 flex flex-col items-center">
             
-            {/* SUBTLE PROGRESS BAR AT TOP */}
+            {/* SUBTLE PROGRESS BAR */}
             <div className="w-full px-2 pt-2">
-                <div className={`h-1.5 w-full rounded-full overflow-hidden ${theme === 'dark' ? 'bg-slate-800' : 'bg-slate-200'}`}>
+                <div className={`h-1 w-full rounded-full overflow-hidden ${theme === 'dark' ? 'bg-slate-800' : 'bg-slate-200'}`}>
                     <div 
-                        className="h-full bg-indigo-500 transition-all duration-500" 
+                        className="h-full bg-indigo-500 transition-all duration-700 ease-out" 
                         style={{ width: `${((charData.length - puzzleQueue.length) / charData.length) * 100}%` }}
                     />
                 </div>
-                <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-2 text-center">
-                    Round Progress: {charData.length - puzzleQueue.length} / {charData.length}
-                </p>
             </div>
 
             {puzzleState.isComplete ? (
@@ -648,16 +622,16 @@ export default function App() {
                     <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto text-green-600 mb-4">
                         <Trophy size={40} />
                     </div>
-                    <h2 className="text-3xl font-black">Round Complete!</h2>
+                    <h2 className="text-3xl font-black text-slate-800 dark:text-white">Round Complete!</h2>
                     <p className="text-slate-500 font-medium">You identified all 49 characters. Great work!</p>
                     <div className="grid grid-cols-2 gap-4">
-                        <div className="p-4 rounded-2xl bg-indigo-50 dark:bg-indigo-950/30">
-                            <p className="text-xs text-slate-500 uppercase font-bold">Total Score</p>
-                            <p className="text-2xl font-black text-indigo-600">{puzzleStats.score}</p>
+                        <div className="p-4 rounded-2xl bg-indigo-50 dark:bg-indigo-950/30 text-indigo-600">
+                            <p className="text-xs uppercase font-bold text-slate-500">Score</p>
+                            <p className="text-2xl font-black">{puzzleStats.score}</p>
                         </div>
-                        <div className="p-4 rounded-2xl bg-indigo-50 dark:bg-indigo-950/30">
-                            <p className="text-xs text-slate-500 uppercase font-bold">Perfects</p>
-                            <p className="text-2xl font-black text-indigo-600">{puzzleStats.perfectGuesses}</p>
+                        <div className="p-4 rounded-2xl bg-indigo-50 dark:bg-indigo-950/30 text-indigo-600">
+                            <p className="text-xs uppercase font-bold text-slate-500">Perfects</p>
+                            <p className="text-2xl font-black">{puzzleStats.perfectGuesses}</p>
                         </div>
                     </div>
                     <button onClick={startNewPuzzleRound} className="w-full py-5 bg-indigo-600 text-white rounded-3xl font-black text-xl shadow-xl hover:scale-[1.02] active:scale-95 transition-all">Start New Round</button>
@@ -666,27 +640,27 @@ export default function App() {
               <>
                 <div className={`w-full grid grid-cols-3 gap-2 p-3 rounded-2xl border-2 shadow-sm ${theme === 'dark' ? 'bg-slate-800/50 border-slate-700' : 'bg-white border-slate-100'}`}>
                     <div className="flex flex-col items-center">
-                        <Trophy size={14} className="text-amber-500 mb-1" />
+                        <Trophy size={14} className="text-amber-500 mb-0.5" />
                         <span className="text-base font-black">{puzzleStats.score}</span>
                         <span className="text-[8px] uppercase font-bold text-slate-500">Score</span>
                     </div>
                     <div className="flex flex-col items-center border-x border-slate-200 dark:border-slate-700">
-                        <Target size={14} className="text-indigo-500 mb-1" />
+                        <Target size={14} className="text-indigo-500 mb-0.5" />
                         <span className="text-base font-black">{puzzleStats.perfectGuesses}</span>
                         <span className="text-[8px] uppercase font-bold text-slate-500">Perfects</span>
                     </div>
                     <div className="flex flex-col items-center">
-                        <Zap size={14} className="text-orange-500 mb-1" />
+                        <Zap size={14} className="text-orange-500 mb-0.5" />
                         <span className="text-base font-black">{puzzleStats.streak}</span>
                         <span className="text-[8px] uppercase font-bold text-slate-500">Streak</span>
                     </div>
                 </div>
 
                 <div className="text-center w-full">
-                  <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-3 italic text-center">Identify Kannada character for</p>
-                  <div className={`w-24 h-24 sm:w-36 sm:h-36 border-4 rounded-3xl mx-auto flex items-center justify-center text-6xl sm:text-8xl font-serif shadow-xl transition-all ${theme === 'dark' ? 'bg-slate-800 border-indigo-500 text-indigo-400' : 'bg-white border-indigo-100 text-indigo-600'}`}>
+                  <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-2 italic">Identify Kannada for</p>
+                  <div className={`w-28 h-28 sm:w-36 sm:h-36 border-4 rounded-3xl mx-auto flex items-center justify-center text-7xl sm:text-8xl font-serif shadow-xl transition-all ${theme === 'dark' ? 'bg-slate-800 border-indigo-500 text-indigo-400' : 'bg-white border-indigo-100 text-indigo-600'}`}>
                     <div className="flex flex-col items-center">
-                        <span>{puzzleState.target.hindi.split(' ')[0]}</span>
+                        <span>{puzzleState.target.hindi}</span>
                         {puzzleState.target.vowelType && (
                             <div className="flex items-center gap-0.5 text-indigo-500 -mt-2">
                                 <Clock size={8} />
@@ -697,7 +671,7 @@ export default function App() {
                   </div>
                 </div>
                 
-                <div className="grid grid-cols-2 gap-3 py-2 w-full">
+                <div className="grid grid-cols-2 gap-3 py-1 w-full flex-1">
                   {puzzleState.options.map(o => {
                     const isCorrect = puzzleState.isSolved && o.id === puzzleState.target.id;
                     const isWrong = puzzleState.wrongIds.includes(o.id);
@@ -706,13 +680,13 @@ export default function App() {
                         key={o.id} 
                         disabled={puzzleState.isSolved || isWrong} 
                         onClick={() => handlePuzzleGuess(o)} 
-                        className={`h-24 sm:h-52 rounded-2xl sm:rounded-[2rem] border-2 flex flex-col items-center justify-center transition-all ${isCorrect ? 'bg-green-500 border-green-400 text-white shadow-xl scale-105 z-10' : isWrong ? 'bg-red-50/10 border-red-500/20 opacity-40 scale-95 cursor-not-allowed' : (theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-200 hover:border-indigo-500 shadow-lg' : 'bg-white border-slate-200 text-slate-800 hover:border-indigo-400 shadow-sm')}`}
+                        className={`w-full h-24 sm:h-36 rounded-2xl sm:rounded-[2rem] border-2 flex flex-col items-center justify-center transition-all ${isCorrect ? 'bg-green-500 border-green-400 text-white shadow-xl scale-105 z-10' : isWrong ? 'bg-red-50/10 border-red-500/20 opacity-40 scale-95 cursor-not-allowed' : (theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-200 hover:border-indigo-500 shadow-lg' : 'bg-white border-slate-200 text-slate-800 hover:border-indigo-400 shadow-sm')}`}
                       >
-                        <span className={`${isCorrect || isWrong ? 'text-2xl sm:text-5xl' : 'text-5xl sm:text-7xl'} font-bold mb-1 transition-all`}>{o.kannada}</span>
+                        <span className={`${isCorrect || isWrong ? 'text-2xl sm:text-4xl' : 'text-5xl sm:text-6xl'} font-bold mb-1 transition-all`}>{o.kannada}</span>
                         {(isCorrect || isWrong) && (
                             <div className="animate-in fade-in zoom-in duration-300 flex flex-col items-center">
                                 <span className="text-[8px] sm:text-[10px] font-bold uppercase tracking-widest opacity-60">is</span>
-                                <span className={`text-xl sm:text-5xl font-black font-serif ${isCorrect ? 'text-white' : 'text-red-700'}`}>{o.hindi.split(' ')[0]}</span>
+                                <span className={`text-xl sm:text-4xl font-black font-serif ${isCorrect ? 'text-white' : 'text-red-700'}`}>{o.hindi}</span>
                             </div>
                         )}
                       </button>
@@ -720,7 +694,7 @@ export default function App() {
                   })}
                 </div>
                 {puzzleState.isSolved && (
-                    <div className="w-full animate-in zoom-in slide-in-from-bottom-2 duration-300 pt-2">
+                    <div className="w-full animate-in zoom-in slide-in-from-bottom-2 duration-300 pt-2 pb-12">
                         <button onClick={() => generatePuzzle()} className="w-full py-4 bg-indigo-600 text-white rounded-3xl font-black text-lg shadow-xl hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-3">Continue <ArrowRight size={20}/></button>
                     </div>
                 )}
