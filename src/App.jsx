@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef } from 'react';
-import { BookOpen, PenTool, ChevronLeft, RefreshCw, Eraser, Home, Info, MousePointer2, Sparkles, Loader2, Star, Check, AlertCircle, Split, Trophy, CheckCircle2, Brain, Quote, Gamepad2, ArrowRight } from 'lucide-react';
+import { BookOpen, PenTool, ChevronLeft, ChevronRight, RefreshCw, Eraser, Home, Info, MousePointer2, Sparkles, Loader2, Star, Check, AlertCircle, Split, Trophy, CheckCircle2, Brain, Quote, Gamepad2, ArrowRight, Volume2, BookHeart } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from 'firebase/app';
@@ -7,53 +7,129 @@ import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged }
 import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc } from 'firebase/firestore';
 
 // --- GEMINI API UTILS ---
-const apiKey = ""; // System provides key
+const apiKey = ""; 
 
-const callGeminiVision = async (base64Image, charData) => {
-  const prompt = `I am a student learning Kannada from Hindi. I just wrote the Kannada character '${charData.kannada}' (which maps to Hindi '${charData.hindi}'). 
-  Look at my handwriting in the image.
-  1. Rate my accuracy from 1 to 5 stars (be encouraging but honest).
-  2. Give me one specific tip to improve the shape or stroke.
-  3. Keep the response very short (max 2 sentences).
-  Output JSON format: { "rating": number, "feedback": "string" }`;
+const base64ToArrayBuffer = (base64) => {
+  const binaryString = window.atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes.buffer;
+};
+
+const pcmToWav = (pcmData, sampleRate) => {
+  const buffer = new ArrayBuffer(44 + pcmData.length * 2);
+  const view = new DataView(buffer);
+  const writeString = (offset, string) => {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i));
+    }
+  };
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + pcmData.length * 2, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); 
+  view.setUint16(22, 1, true); 
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true); 
+  view.setUint16(32, 2, true); 
+  view.setUint16(34, 16, true); 
+  writeString(36, 'data');
+  view.setUint32(40, pcmData.length * 2, true);
+  for (let i = 0; i < pcmData.length; i++) {
+    view.setInt16(44 + i * 2, pcmData[i], true);
+  }
+  return new Blob([buffer], { type: 'audio/wav' });
+};
+
+// Improved TTS using Kannada script directly for accurate phonetics
+const callGeminiAudio = async (kannadaChar, retryCount = 0) => {
+  const payload = {
+    contents: [{ parts: [{ text: kannadaChar }] }], // Sending only the Kannada letter for best results
+    generationConfig: {
+      responseModalities: ["AUDIO"],
+      speechConfig: {
+        voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } }
+      }
+    }
+  };
 
   try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) throw new Error(`TTS API Error: ${response.status}`);
+
+    const result = await response.json();
+    const part = result?.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+    const audioDataBase64 = part?.inlineData?.data;
+    const mimeType = part?.inlineData?.mimeType;
+
+    if (audioDataBase64 && mimeType) {
+      const sampleRateMatch = mimeType.match(/rate=(\d+)/);
+      const sampleRate = sampleRateMatch ? parseInt(sampleRateMatch[1], 10) : 24000;
+      const pcm16 = new Int16Array(base64ToArrayBuffer(audioDataBase64));
+      const wavBlob = pcmToWav(pcm16, sampleRate);
+      return URL.createObjectURL(wavBlob);
+    }
+    throw new Error("Invalid audio response format");
+  } catch (error) {
+    if (retryCount < 2) {
+        await new Promise(r => setTimeout(r, 1000));
+        return callGeminiAudio(kannadaChar, retryCount + 1);
+    }
+    throw error;
+  }
+};
+
+const callGeminiStory = async (charData) => {
+  const prompt = `Act as a Kannada teacher. Write a short 2-sentence story for kids using character '${charData.kannada}' (${charData.trans}) prominently. 
+  Output JSON format: { 
+    "kannada_story": "string", 
+    "hindi_script_story": "string", 
+    "hindi_translation": "string" 
+  }`;
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [{
-          parts: [
-            { text: prompt },
-            { inlineData: { mimeType: "image/png", data: base64Image } }
-          ]
-        }],
+        contents: [{ parts: [{ text: prompt }] }],
         generationConfig: { responseMimeType: "application/json" }
       })
     });
-    
-    if (!response.ok) throw new Error(`API Error: ${response.status}`);
     const data = await response.json();
     return JSON.parse(data.candidates[0].content.parts[0].text);
-  } catch (error) {
-    console.error("Vision Error:", error);
-    throw error;
-  }
+  } catch (error) { throw error; }
+};
+
+const callGeminiVision = async (base64Image, charData) => {
+  const prompt = `Rate handwriting of Kannada letter '${charData.kannada}' (Hindi: '${charData.hindi}') from 1-5. Give 1 tip in Hindi/English. JSON: { "rating": number, "feedback": "string" }`;
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: base64Image } }] }],
+        generationConfig: { responseMimeType: "application/json" }
+      })
+    });
+    const data = await response.json();
+    return JSON.parse(data.candidates[0].content.parts[0].text);
+  } catch (error) { throw error; }
 };
 
 const callGeminiTutor = async (charData) => {
-  const prompt = `I am learning the Kannada character '${charData.kannada}' (Hindi: '${charData.hindi}').
-  1. Give me a creative visual mnemonic to remember its shape (e.g., "It looks like a curled snake").
-  2. Give me 2 simple Kannada words starting with this letter.
-  For each word provide:
-  - "kannada": The word in Kannada script.
-  - "meaning": The meaning in Hindi.
-  - "english_pronunciation": How to pronounce the Kannada word written in English letters.
-  - "hindi_pronunciation": How to pronounce the Kannada word written in Hindi letters.
-  Output JSON format: { "mnemonic": "string", "words": [{ "kannada": "string", "meaning": "string", "english_pronunciation": "string", "hindi_pronunciation": "string" }] }`;
-
+  const prompt = `Learning Kannada letter '${charData.kannada}'. Provide mnemonic and 2 example words. All explanations in Hindi. JSON: { "mnemonic": "string", "words": [{ "kannada": "string", "meaning": "string", "english_pronunciation": "string", "hindi_pronunciation": "string" }] }`;
   try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -61,28 +137,15 @@ const callGeminiTutor = async (charData) => {
         generationConfig: { responseMimeType: "application/json" }
       })
     });
-
-    if (!response.ok) throw new Error(`API Error: ${response.status}`);
     const data = await response.json();
     return JSON.parse(data.candidates[0].content.parts[0].text);
-  } catch (error) {
-    console.error("Text Error:", error);
-    throw error;
-  }
+  } catch (error) { throw error; }
 };
 
 const callGeminiSimilar = async (charData) => {
-  const prompt = `I am learning the Kannada character '${charData.kannada}'.
-  1. Identify ONE other Kannada character that looks **VISUALLY** similar to it (a "confusing pair").
-  - **IMPORTANT**: Focus strictly on SHAPE similarity, NOT phonetic similarity. 
-  - Do NOT compare 'ಇ' with 'ಈ' as they look very different.
-  - Good examples: 'ವ' vs 'ಮ', 'ಪ' vs 'ಷ', 'ಬ' vs 'ಒ'.
-  2. Explain the main visual difference between them in a simple sentence.
-  3. If there are no very similar characters, compare it to the character it is most often confused with by beginners due to stroke style.
-  Output JSON format: { "similar_char": "string", "difference": "string" }`;
-
+  const prompt = `Identify ONE similar char to Kannada '${charData.kannada}'. Explain difference in Hindi. JSON: { "similar_char": "string", "difference": "string" }`;
   try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -90,23 +153,15 @@ const callGeminiSimilar = async (charData) => {
         generationConfig: { responseMimeType: "application/json" }
       })
     });
-
-    if (!response.ok) throw new Error(`API Error: ${response.status}`);
     const data = await response.json();
     return JSON.parse(data.candidates[0].content.parts[0].text);
-  } catch (error) {
-    console.error("Similar Error:", error);
-    throw error;
-  }
+  } catch (error) { throw error; }
 };
 
 const callGeminiQuiz = async (charData) => {
-  const prompt = `Create a single multiple-choice question to test a beginner's knowledge of the Kannada character '${charData.kannada}' (Hindi: '${charData.hindi}').
-  The question could be about recognizing the shape, the sound, or a simple word.
-  Output JSON format: { "question": "string", "options": ["string", "string", "string", "string"], "correctIndex": number, "explanation": "string" }`;
-
+  const prompt = `Create a MCQ for Kannada '${charData.kannada}'. Explanation in Hindi. JSON: { "question": "string", "options": ["string", "string", "string", "string"], "correctIndex": number, "explanation": "string" }`;
   try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -114,22 +169,15 @@ const callGeminiQuiz = async (charData) => {
         generationConfig: { responseMimeType: "application/json" }
       })
     });
-
-    if (!response.ok) throw new Error(`API Error: ${response.status}`);
     const data = await response.json();
     return JSON.parse(data.candidates[0].content.parts[0].text);
-  } catch (error) {
-    console.error("Quiz Error:", error);
-    throw error;
-  }
+  } catch (error) { throw error; }
 };
 
 const callGeminiUsage = async (charData) => {
-  const prompt = `Generate a very simple Kannada sentence using a common word that starts with the character '${charData.kannada}' (${charData.trans}).
-  Output JSON format: { "sentence": "string", "transliteration": "string", "hindi_translation": "string", "word_used": "string" }`;
-
+  const prompt = `Generate a simple Kannada sentence with '${charData.kannada}'. Provide Kannada sentence, Hindi script representation, and Hindi meaning. JSON: { "sentence": "string", "hindi_script_representation": "string", "transliteration": "string", "hindi_translation": "string" }.`;
   try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -137,81 +185,62 @@ const callGeminiUsage = async (charData) => {
         generationConfig: { responseMimeType: "application/json" }
       })
     });
-
-    if (!response.ok) throw new Error(`API Error: ${response.status}`);
     const data = await response.json();
     return JSON.parse(data.candidates[0].content.parts[0].text);
-  } catch (error) {
-    console.error("Usage Error:", error);
-    throw error;
-  }
+  } catch (error) { throw error; }
 };
 
-
-// --- DATASET: Hindi to Kannada Mapping ---
+// --- DATASET ---
 const charData = [
-  // Vowels (Swar)
-  { id: 'v1', hindi: 'अ', kannada: 'ಅ', trans: 'a', type: 'vowel' },
-  { id: 'v2', hindi: 'आ', kannada: 'ಆ', trans: 'aa', type: 'vowel' },
-  { id: 'v3', hindi: 'इ', kannada: 'ಇ', trans: 'i', type: 'vowel' },
-  { id: 'v4', hindi: 'ई', kannada: 'ಈ', trans: 'ii', type: 'vowel' },
-  { id: 'v5', hindi: 'उ', kannada: 'ಉ', trans: 'u', type: 'vowel' },
-  { id: 'v6', hindi: 'ऊ', kannada: 'ಊ', trans: 'uu', type: 'vowel' },
-  { id: 'v7', hindi: 'ऋ', kannada: 'ಋ', trans: 'ru', type: 'vowel' },
-  { id: 'v8', hindi: 'ए', kannada: 'ಎ', trans: 'e', type: 'vowel' },
-  { id: 'v9', hindi: 'ऐ', kannada: 'ಏ', trans: 'ee', type: 'vowel' },
-  { id: 'v10', hindi: 'ऐ', kannada: 'ಐ', trans: 'ai', type: 'vowel' },
-  { id: 'v11', hindi: 'ओ', kannada: 'ಒ', trans: 'o', type: 'vowel' },
-  { id: 'v12', hindi: 'औ', kannada: 'ಓ', trans: 'oo', type: 'vowel' },
-  { id: 'v13', hindi: 'औ', kannada: 'ಔ', trans: 'au', type: 'vowel' },
-  { id: 'v14', hindi: 'अं', kannada: 'ಅಂ', trans: 'am', type: 'vowel' },
-  { id: 'v15', hindi: 'अः', kannada: 'ಅಃ', trans: 'ah', type: 'vowel' },
-
-  // Consonants (Vyanjan) - Ka Varga
-  { id: 'c1', hindi: 'क', kannada: 'ಕ', trans: 'ka', type: 'consonant' },
-  { id: 'c2', hindi: 'ख', kannada: 'ಖ', trans: 'kha', type: 'consonant' },
-  { id: 'c3', hindi: 'ग', kannada: 'ಗ', trans: 'ga', type: 'consonant' },
-  { id: 'c4', hindi: 'घ', kannada: 'ಘ', trans: 'gha', type: 'consonant' },
-  { id: 'c5', hindi: 'ङ', kannada: 'ಙ', trans: 'nga', type: 'consonant' },
-
-  // Cha Varga
-  { id: 'c6', hindi: 'च', kannada: 'ಚ', trans: 'cha', type: 'consonant' },
-  { id: 'c7', hindi: 'छ', kannada: 'ಛ', trans: 'chha', type: 'consonant' },
-  { id: 'c8', hindi: 'ज', kannada: 'ಜ', trans: 'ja', type: 'consonant' },
-  { id: 'c9', hindi: 'झ', kannada: 'ಝ', trans: 'jha', type: 'consonant' },
-  { id: 'c10', hindi: 'ञ', kannada: 'ಞ', trans: 'nya', type: 'consonant' },
-
-  // Ta Varga (Retroflex)
-  { id: 'c11', hindi: 'ट', kannada: 'ಟ', trans: 'ta', type: 'consonant' },
-  { id: 'c12', hindi: 'ठ', kannada: 'ಠ', trans: 'tha', type: 'consonant' },
-  { id: 'c13', hindi: 'ड', kannada: 'ಡ', trans: 'da', type: 'consonant' },
-  { id: 'c14', hindi: 'ढ', kannada: 'ಢ', trans: 'dha', type: 'consonant' },
-  { id: 'c15', hindi: 'ण', kannada: 'ಣ', trans: 'na', type: 'consonant' },
-
-  // Ta Varga (Dental)
-  { id: 'c16', hindi: 'त', kannada: 'ತ', trans: 'ta', type: 'consonant' },
-  { id: 'c17', hindi: 'थ', kannada: 'ಥ', trans: 'tha', type: 'consonant' },
-  { id: 'c18', hindi: 'द', kannada: 'ದ', trans: 'da', type: 'consonant' },
-  { id: 'c19', hindi: 'ध', kannada: 'ಧ', trans: 'dha', type: 'consonant' },
-  { id: 'c20', hindi: 'न', kannada: 'ನ', trans: 'na', type: 'consonant' },
-
-  // Pa Varga
-  { id: 'c21', hindi: 'प', kannada: 'ಪ', trans: 'pa', type: 'consonant' },
-  { id: 'c22', hindi: 'फ', kannada: 'ಫ', trans: 'pha', type: 'consonant' },
-  { id: 'c23', hindi: 'ब', kannada: 'ಬ', trans: 'ba', type: 'consonant' },
-  { id: 'c24', hindi: 'भ', kannada: 'ಭ', trans: 'bha', type: 'consonant' },
-  { id: 'c25', hindi: 'म', kannada: 'ಮ', trans: 'ma', type: 'consonant' },
-
-  // Ya Raa La Va ...
-  { id: 'c26', hindi: 'य', kannada: 'ಯ', trans: 'ya', type: 'consonant' },
-  { id: 'c27', hindi: 'र', kannada: 'ರ', trans: 'ra', type: 'consonant' },
-  { id: 'c28', hindi: 'ल', kannada: 'ಲ', trans: 'la', type: 'consonant' },
-  { id: 'c29', hindi: 'व', kannada: 'ವ', trans: 'va', type: 'consonant' },
-  { id: 'c30', hindi: 'श', kannada: 'ಶ', trans: 'sha', type: 'consonant' },
-  { id: 'c31', hindi: 'ष', kannada: 'ಷ', trans: 'sha', type: 'consonant' },
-  { id: 'c32', hindi: 'स', kannada: 'ಸ', trans: 'sa', type: 'consonant' },
-  { id: 'c33', hindi: 'ह', kannada: 'ಹ', trans: 'ha', type: 'consonant' },
-  { id: 'c34', hindi: 'ळ', kannada: 'ಳ', trans: 'la', type: 'consonant' },
+  { id: 'v1', hindi: 'अ', kannada: 'ಅ', trans: 'a', type: 'vowel', subgroup: 'Vowels' },
+  { id: 'v2', hindi: 'आ', kannada: 'ಆ', trans: 'aa', type: 'vowel', subgroup: 'Vowels' },
+  { id: 'v3', hindi: 'इ', kannada: 'ಇ', trans: 'i', type: 'vowel', subgroup: 'Vowels' },
+  { id: 'v4', hindi: 'ई', kannada: 'ಈ', trans: 'ii', type: 'vowel', subgroup: 'Vowels' },
+  { id: 'v5', hindi: 'उ', kannada: 'ಉ', trans: 'u', type: 'vowel', subgroup: 'Vowels' },
+  { id: 'v6', hindi: 'ऊ', kannada: 'ಊ', trans: 'uu', type: 'vowel', subgroup: 'Vowels' },
+  { id: 'v7', hindi: 'ऋ', kannada: 'ಋ', trans: 'ru', type: 'vowel', subgroup: 'Vowels' },
+  { id: 'v8', hindi: 'ए', kannada: 'ಎ', trans: 'e', type: 'vowel', subgroup: 'Vowels' },
+  { id: 'v9', hindi: 'ए', kannada: 'ಏ', trans: 'ee', type: 'vowel', subgroup: 'Vowels' },
+  { id: 'v10', hindi: 'ऐ', kannada: 'ಐ', trans: 'ai', type: 'vowel', subgroup: 'Vowels' },
+  { id: 'v11', hindi: 'ओ', kannada: 'ಒ', trans: 'o', type: 'vowel', subgroup: 'Vowels' },
+  { id: 'v12', hindi: 'ओ', kannada: 'ಓ', trans: 'oo', type: 'vowel', subgroup: 'Vowels' },
+  { id: 'v13', hindi: 'औ', kannada: 'ಔ', trans: 'au', type: 'vowel', subgroup: 'Vowels' },
+  { id: 'v14', hindi: 'अं', kannada: 'ಅಂ', trans: 'am', type: 'vowel', subgroup: 'Vowels' },
+  { id: 'v15', hindi: 'अः', kannada: 'ಅಃ', trans: 'ah', type: 'vowel', subgroup: 'Vowels' },
+  { id: 'c1', hindi: 'क', kannada: 'ಕ', trans: 'ka', type: 'consonant', subgroup: 'Ka-Varga (क-वर्ग)' },
+  { id: 'c2', hindi: 'ख', kannada: 'ಖ', trans: 'kha', type: 'consonant', subgroup: 'Ka-Varga (क-वर्ग)' },
+  { id: 'c3', hindi: 'ग', kannada: 'ಗ', trans: 'ga', type: 'consonant', subgroup: 'Ka-Varga (क-वर्ग)' },
+  { id: 'c4', hindi: 'घ', kannada: 'ಘ', trans: 'gha', type: 'consonant', subgroup: 'Ka-Varga (क-वर्ग)' },
+  { id: 'c5', hindi: 'ङ', kannada: 'ಙ', trans: 'nga', type: 'consonant', subgroup: 'Ka-Varga (क-वर्ग)' },
+  { id: 'c6', hindi: 'च', kannada: 'ಚ', trans: 'cha', type: 'consonant', subgroup: 'Cha-Varga (च-वर्ग)' },
+  { id: 'c7', hindi: 'छ', kannada: 'ಛ', trans: 'chha', type: 'consonant', subgroup: 'Cha-Varga (च-वर्ग)' },
+  { id: 'c8', hindi: 'ज', kannada: 'ಜ', trans: 'ja', type: 'consonant', subgroup: 'Cha-Varga (च-वर्ग)' },
+  { id: 'c9', hindi: 'झ', kannada: 'ಝ', trans: 'jha', type: 'consonant', subgroup: 'Cha-Varga (च-वर्ग)' },
+  { id: 'c10', hindi: 'ञ', kannada: 'ಞ', trans: 'nya', type: 'consonant', subgroup: 'Cha-Varga (च-वर्ग)' },
+  { id: 'c11', hindi: 'ट', kannada: 'ಟ', trans: 'ta', type: 'consonant', subgroup: 'Ta-Varga (ट-वर्ग)' },
+  { id: 'c12', hindi: 'ठ', kannada: 'ಠ', trans: 'tha', type: 'consonant', subgroup: 'Ta-Varga (ट-वर्ग)' },
+  { id: 'c13', hindi: 'ड', kannada: 'ಡ', trans: 'da', type: 'consonant', subgroup: 'Ta-Varga (ट-वर्ग)' },
+  { id: 'c14', hindi: 'ढ', kannada: 'ಢ', trans: 'dha', type: 'consonant', subgroup: 'Ta-Varga (ट-वर्ग)' },
+  { id: 'c15', hindi: 'ण', kannada: 'ಣ', trans: 'na', type: 'consonant', subgroup: 'Ta-Varga (ट-वर्ग)' },
+  { id: 'c16', hindi: 'त', kannada: 'ತ', trans: 'ta', type: 'consonant', subgroup: 'Ta-Varga (त-वर्ग)' },
+  { id: 'c17', hindi: 'थ', kannada: 'ಥ', trans: 'tha', type: 'consonant', subgroup: 'Ta-Varga (त-वर्ग)' },
+  { id: 'c18', hindi: 'द', kannada: 'ದ', trans: 'da', type: 'consonant', subgroup: 'Ta-Varga (त-वर्ग)' },
+  { id: 'c19', hindi: 'ध', kannada: 'ಧ', trans: 'dha', type: 'consonant', subgroup: 'Ta-Varga (त-वर्ग)' },
+  { id: 'c20', hindi: 'न', kannada: 'ನ', trans: 'na', type: 'consonant', subgroup: 'Ta-Varga (त-वर्ग)' },
+  { id: 'c21', hindi: 'प', kannada: 'ಪ', trans: 'pa', type: 'consonant', subgroup: 'Pa-Varga (प-वर्ग)' },
+  { id: 'c22', hindi: 'ಫ', kannada: 'ಫ', trans: 'pha', type: 'consonant', subgroup: 'Pa-Varga (प-वर्ग)' },
+  { id: 'c23', hindi: 'ಬ', kannada: 'ಬ', trans: 'ba', type: 'consonant', subgroup: 'Pa-Varga (प-वर्ग)' },
+  { id: 'c24', hindi: 'ಭ', kannada: 'ಭ', trans: 'bha', type: 'consonant', subgroup: 'Pa-Varga (प-वर्ग)' },
+  { id: 'c25', hindi: 'ಮ', kannada: 'ಮ', trans: 'ma', type: 'consonant', subgroup: 'Pa-Varga (प-वर्ग)' },
+  { id: 'c26', hindi: 'ಯ', kannada: 'ಯ', trans: 'ya', type: 'consonant', subgroup: 'Misc (अन्य)' },
+  { id: 'c27', hindi: 'ರ', kannada: 'ರ', trans: 'ra', type: 'consonant', subgroup: 'Misc (अन्य)' },
+  { id: 'c28', hindi: 'ಲ', kannada: 'ಲ', trans: 'la', type: 'consonant', subgroup: 'Misc (अन्य)' },
+  { id: 'c29', hindi: 'ವ', kannada: 'ವ', trans: 'va', type: 'consonant', subgroup: 'Misc (अन्य)' },
+  { id: 'c30', hindi: 'ಶ', kannada: 'ಶ', trans: 'sha', type: 'consonant', subgroup: 'Misc (अन्य)' },
+  { id: 'c31', hindi: 'ಷ', kannada: 'ಷ', trans: 'sha', type: 'consonant', subgroup: 'Misc (अन्य)' },
+  { id: 'c32', hindi: 'ಸ', kannada: 'ಸ', trans: 'sa', type: 'consonant', subgroup: 'Misc (अन्य)' },
+  { id: 'c33', hindi: 'ಹ', kannada: 'ಹ', trans: 'ha', type: 'consonant', subgroup: 'Misc (अन्य)' },
+  { id: 'c34', hindi: 'ಳ', kannada: 'ಳ', trans: 'la', type: 'consonant', subgroup: 'Misc (अन्य)' },
 ];
 
 // --- COMPONENTS ---
@@ -225,191 +254,108 @@ const WritingPad = forwardRef(({ character, onClear }, ref) => {
     getCanvasImage: () => {
       const canvas = canvasRef.current;
       if (!canvas) return null;
-      
       const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = canvas.width;
-      tempCanvas.height = canvas.height;
+      tempCanvas.width = canvas.width; tempCanvas.height = canvas.height;
       const tCtx = tempCanvas.getContext('2d');
-      
-      tCtx.fillStyle = '#ffffff';
-      tCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+      tCtx.fillStyle = '#ffffff'; tCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
       tCtx.drawImage(canvas, 0, 0);
-      
       return tempCanvas.toDataURL('image/png').split(',')[1];
-    }
+    },
+    clear: () => { if (canvasRef.current) canvasRef.current.getContext('2d').clearRect(0, 0, 9999, 9999); }
   }));
 
   useEffect(() => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
-    
     if (!canvas || !container) return;
-
-    // Use ResizeObserver to reliably set canvas size even during/after animations
-    const resizeObserver = new ResizeObserver(() => {
+    const updateCanvasSize = () => {
         const dpr = window.devicePixelRatio || 1;
         const rect = container.getBoundingClientRect();
-
-        // Only update if dimensions are valid to prevent 0x0 issues
-        if (rect.width > 0 && rect.height > 0) {
-            canvas.width = rect.width * dpr;
-            canvas.height = rect.height * dpr;
-
-            const ctx = canvas.getContext('2d');
-            ctx.scale(dpr, dpr);
-            
-            ctx.lineCap = 'round';
-            ctx.lineJoin = 'round';
-            ctx.strokeStyle = '#2563eb';
-            ctx.lineWidth = 12; 
-            
-            canvas.style.width = `${rect.width}px`;
-            canvas.style.height = `${rect.height}px`;
-        }
-    });
-
-    resizeObserver.observe(container);
-
-    return () => resizeObserver.disconnect();
-  }, [character]); 
-
-  const getCoordinates = (e) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return { x: 0, y: 0 };
-    
-    const rect = canvas.getBoundingClientRect();
-    const clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
-    const clientY = e.type.includes('touch') ? e.touches[0].clientY : e.clientY;
-
-    return {
-      x: clientX - rect.left,
-      y: clientY - rect.top
+        canvas.width = rect.width * dpr; canvas.height = rect.height * dpr;
+        const ctx = canvas.getContext('2d');
+        ctx.scale(dpr, dpr);
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 18;
     };
-  };
+    const resizeObserver = new ResizeObserver(updateCanvasSize);
+    resizeObserver.observe(container);
+    updateCanvasSize();
+    return () => resizeObserver.disconnect();
+  }, [character]);
 
   const startDrawing = (e) => {
     e.preventDefault(); 
     const ctx = canvasRef.current.getContext('2d');
-    const { x, y } = getCoordinates(e);
-
-    ctx.beginPath();
-    ctx.moveTo(x, y);
-    setIsDrawing(true);
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = (e.type.includes('touch') ? e.touches[0].clientX : e.clientX) - rect.left;
+    const y = (e.type.includes('touch') ? e.touches[0].clientY : e.clientY) - rect.top;
+    ctx.beginPath(); ctx.moveTo(x, y); setIsDrawing(true);
   };
 
   const draw = (e) => {
-    if (!isDrawing) return;
-    e.preventDefault(); 
-    
+    if (!isDrawing) return; e.preventDefault();
     const ctx = canvasRef.current.getContext('2d');
-    const { x, y } = getCoordinates(e);
-
-    ctx.lineTo(x, y);
-    ctx.stroke();
-  };
-
-  const stopDrawing = () => {
-    setIsDrawing(false);
-    const ctx = canvasRef.current.getContext('2d');
-    ctx.closePath();
-  };
-
-  const clearCanvas = () => {
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    ctx.clearRect(0, 0, canvas.width, canvas.height); 
-    if(onClear) onClear();
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = (e.type.includes('touch') ? e.touches[0].clientX : e.clientX) - rect.left;
+    const y = (e.type.includes('touch') ? e.touches[0].clientY : e.clientY) - rect.top;
+    ctx.lineTo(x, y); ctx.stroke();
   };
 
   return (
-    <div className="flex flex-col items-center gap-4">
-      <div 
-        ref={containerRef}
-        className="relative w-72 h-72 sm:w-80 sm:h-80 bg-white rounded-3xl shadow-inner border border-slate-200 overflow-hidden select-none"
-      >
+    <div className="flex flex-col items-center w-full px-2 mb-4 flex-none">
+      <div ref={containerRef} className="relative w-full h-[400px] sm:h-[500px] bg-white rounded-3xl shadow-lg border-2 border-indigo-100 overflow-hidden select-none">
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <span className="text-9xl text-slate-200 font-bold opacity-80" style={{ fontSize: '180px', fontFamily: 'serif' }}>
-            {character}
-          </span>
+          <span className="text-slate-50 font-bold" style={{ fontSize: '320px', fontFamily: 'serif' }}>{character}</span>
         </div>
-        
-        <canvas
-          ref={canvasRef}
-          onMouseDown={startDrawing}
-          onMouseMove={draw}
-          onMouseUp={stopDrawing}
-          onMouseLeave={stopDrawing}
-          onTouchStart={startDrawing}
-          onTouchMove={draw}
-          onTouchEnd={stopDrawing}
-          className="absolute inset-0 w-full h-full cursor-crosshair touch-none z-10"
+        <canvas 
+            ref={canvasRef} 
+            onMouseDown={startDrawing} onMouseMove={draw} onMouseUp={() => setIsDrawing(false)} 
+            onMouseLeave={() => setIsDrawing(false)} onTouchStart={startDrawing} onTouchMove={draw} onTouchEnd={() => setIsDrawing(false)} 
+            className="absolute inset-0 w-full h-full cursor-crosshair touch-none z-10" 
         />
+        <button 
+            onClick={() => { if(canvasRef.current){canvasRef.current.getContext('2d').clearRect(0,0,9999,9999);} if(onClear)onClear(); }} 
+            className="absolute bottom-6 right-6 z-20 flex items-center gap-2 px-6 py-3 bg-slate-900/80 backdrop-blur text-white rounded-full hover:bg-slate-700 transition-all text-sm font-bold shadow-2xl"
+        >
+            <Eraser size={18} /> Clear
+        </button>
       </div>
-
-      <button 
-        onClick={clearCanvas}
-        className="flex items-center gap-2 px-6 py-2 bg-slate-800 text-white rounded-full hover:bg-slate-700 transition-colors text-sm font-medium shadow-lg shadow-slate-200"
-      >
-        <Eraser size={16} />
-        Clear Board
-      </button>
     </div>
   );
 });
 
 const CharacterCard = ({ data, onClick, isCompleted }) => (
-  <button 
-    onClick={() => onClick(data)}
-    className={`flex flex-col items-center justify-center p-4 rounded-xl shadow-sm border transition-all duration-200 group relative ${isCompleted ? 'bg-green-50 border-green-200' : 'bg-white border-slate-100 hover:shadow-md hover:border-indigo-200'}`}
-  >
-    <div className="flex items-baseline gap-2 mb-2">
-      <span className="text-xl text-slate-400 font-medium">{data.hindi}</span>
+  <button onClick={() => onClick(data)} className={`flex flex-col items-center justify-center p-4 rounded-xl shadow-sm border-2 transition-all duration-200 group relative ${isCompleted ? 'bg-green-50 border-green-200' : 'bg-white border-slate-100 hover:border-indigo-300 hover:shadow-md'}`}>
+    <div className="flex items-baseline gap-2 mb-1">
+      <span className="text-base text-slate-400 font-medium">{data.hindi}</span>
       <span className={`text-3xl font-bold group-hover:text-indigo-600 ${isCompleted ? 'text-green-700' : 'text-slate-800'}`}>{data.kannada}</span>
     </div>
-    <span className="text-xs text-slate-500 font-mono bg-white/50 px-2 py-0.5 rounded">{data.trans}</span>
-    
-    {isCompleted && (
-       <div className="absolute top-2 right-2">
-         <CheckCircle2 size={16} className="text-green-500 fill-green-100" />
-       </div>
-    )}
-    
-    {!isCompleted && (
-        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-           <MousePointer2 size={12} className="text-indigo-400" />
-        </div>
-    )}
+    <span className="text-xs text-slate-400 font-mono">/{data.trans}/</span>
+    {isCompleted && <div className="absolute top-2 right-2"><CheckCircle2 size={16} className="text-green-500 fill-green-100" /></div>}
   </button>
 );
 
 export default function App() {
-  const [view, setView] = useState('home'); 
-  const [category, setCategory] = useState(null); 
+  const [view, setView] = useState('home');
+  const [category, setCategory] = useState(null);
   const [selectedChar, setSelectedChar] = useState(null);
-  
-  // AI States
   const [isAiLoading, setIsAiLoading] = useState(false);
-  const [activeFeature, setActiveFeature] = useState(null); // 'tutor', 'similar', 'quiz', 'usage', 'feedback'
-  const [aiData, setAiData] = useState({}); // Store data for current active feature
-  const [error, setError] = useState(null); 
-  const padRef = useRef(null);
-
-  // Puzzle State - UPDATED for multiple attempts
-  const [puzzleState, setPuzzleState] = useState({ 
-    target: null, 
-    options: [], 
-    wrongIds: [], // Track incorrect attempts
-    isSolved: false // Track if puzzle is completed
-  });
-
-  // Persistence & Cache States
+  const [activeFeature, setActiveFeature] = useState(null);
+  const [aiData, setAiData] = useState({});
+  const [error, setError] = useState(null);
   const [user, setUser] = useState(null);
   const [completedChars, setCompletedChars] = useState({});
-  const [cache, setCache] = useState({ tutor: {}, similar: {}, quiz: {}, usage: {} });
+  const [puzzleState, setPuzzleState] = useState({ target: null, options: [], wrongIds: [], isSolved: false });
+  
+  // Audio State & Cache
+  const [audioCache, setAudioCache] = useState({});
+  const [isAudioLoading, setIsAudioLoading] = useState(false);
 
-  // --- FIREBASE INIT ---
+  const padRef = useRef(null);
+  const touchStartRef = useRef(null);
+  const resultRef = useRef(null);
+
   useEffect(() => {
-    // Try multiple locations for the firebase config string/object.
+        // Try multiple locations for the firebase config string/object.
     const rawConfig = (typeof __firebase_config !== 'undefined' && __firebase_config)
       || import.meta.env.VITE_FIREBASE_CONFIG
       || (typeof window !== 'undefined' && window.__firebase_config)
@@ -427,748 +373,374 @@ export default function App() {
       console.error('Failed to parse firebase config:', e);
       return;
     }
-
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
-    
     const initAuth = async () => {
-      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-        await signInWithCustomToken(auth, __initial_auth_token);
-      } else {
-        await signInAnonymously(auth);
-      }
+      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token);
+      else await signInAnonymously(auth);
     };
-    
     initAuth();
-    
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-    });
-
-    return () => unsubscribe();
+    onAuthStateChanged(auth, setUser);
   }, []);
 
-  // --- FIREBASE SYNC ---
   useEffect(() => {
     if (!user) return;
     const db = getFirestore();
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-    
-    const q = collection(db, 'artifacts', appId, 'users', user.uid, 'progress');
-    
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const progress = {};
-      snapshot.forEach(doc => {
-        progress[doc.id] = true;
-      });
-      setCompletedChars(progress);
-    }, (err) => console.error("Sync error:", err));
-
-    return () => unsubscribe();
+    return onSnapshot(collection(db, 'artifacts', appId, 'users', user.uid, 'progress'), (snap) => {
+      const progress = {}; snap.forEach(doc => progress[doc.id] = true); setCompletedChars(progress);
+    });
   }, [user]);
+
+  // Background Audio Pre-caching Logic
+  useEffect(() => {
+    if (view === 'list' && category) {
+      const charsToCache = charData.filter(c => c.type === category);
+      const cacheQueue = async () => {
+        for (const char of charsToCache) {
+          if (!audioCache[char.id]) {
+            try {
+              const url = await callGeminiAudio(char.kannada);
+              setAudioCache(prev => ({ ...prev, [char.id]: url }));
+              // Throttle background requests to avoid hitting rate limits
+              await new Promise(r => setTimeout(r, 2000));
+            } catch (e) { console.warn("Background cache skipped for:", char.trans); }
+          }
+        }
+      };
+      cacheQueue();
+    }
+  }, [view, category]);
+
+  useEffect(() => {
+    if (activeFeature && resultRef.current) {
+        resultRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [activeFeature, aiData]);
 
   const toggleComplete = async () => {
     if (!user || !selectedChar) return;
     const db = getFirestore();
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-    const charId = selectedChar.id;
-    const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'progress', charId);
+    const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'progress', selectedChar.id);
+    if (completedChars[selectedChar.id]) await deleteDoc(docRef);
+    else await setDoc(docRef, { learned: true, updatedAt: new Date().toISOString() });
+  };
 
-    if (completedChars[charId]) {
-      await deleteDoc(docRef);
-    } else {
-      await setDoc(docRef, { 
-        learned: true,
-        updatedAt: new Date().toISOString()
-      });
+  const currentList = category ? charData.filter(c => c.type === category) : charData;
+  const currentIndex = selectedChar ? currentList.findIndex(c => c.id === selectedChar.id) : -1;
+  const prevCharData = currentIndex > 0 ? currentList[currentIndex - 1] : null;
+  const nextCharData = currentIndex < currentList.length - 1 ? currentList[currentIndex + 1] : null;
+
+  const navigateTo = (direction) => {
+    if (currentIndex === -1) return;
+    let nextIdx = currentIndex + direction;
+    if (nextIdx >= 0 && nextIdx < currentList.length) {
+      setSelectedChar(currentList[nextIdx]);
+      setAiData({}); setActiveFeature(null); setError(null);
+      if (padRef.current) padRef.current.clear();
     }
   };
 
-
-  const getCharacters = () => {
-    if (!category) return [];
-    return charData.filter(c => c.type === category);
+  const handleTouchStart = (e) => { touchStartRef.current = e.touches[0].clientX; };
+  const handleTouchEnd = (e) => {
+    if (!touchStartRef.current || e.target.tagName === 'CANVAS') return;
+    const diff = touchStartRef.current - e.changedTouches[0].clientX;
+    if (Math.abs(diff) > 70) diff > 0 ? navigateTo(1) : navigateTo(-1);
+    touchStartRef.current = null;
   };
 
-  const charList = getCharacters();
-  const currentIndex = selectedChar ? charList.findIndex(c => c.id === selectedChar.id) : -1;
-  const prevData = currentIndex > 0 ? charList[currentIndex - 1] : null;
-  const nextData = currentIndex < charList.length - 1 ? charList[currentIndex + 1] : null;
-
-  const handleCharSelect = (char) => {
-    setSelectedChar(char);
-    setAiData({});
-    setActiveFeature(null);
-    setError(null);
-    setView('practice');
-  };
-
-  const goBack = () => {
-    if (view === 'practice' || view === 'puzzle') {
-      setView(view === 'puzzle' ? 'home' : 'list');
-      setSelectedChar(null);
-      setAiData({});
-      setActiveFeature(null);
-      setError(null);
-    } else if (view === 'list') {
-      setView('home');
-      setCategory(null);
-    }
-  };
-
-  const nextChar = () => {
-    if (nextData) handleCharSelect(nextData);
-  };
-
-  const prevChar = () => {
-    if (prevData) handleCharSelect(prevData);
-  };
-
-  // --- PUZZLE LOGIC ---
-  const generatePuzzle = () => {
-    const randomIdx = Math.floor(Math.random() * charData.length);
-    const target = charData[randomIdx];
-    
-    // Get 3 random unique distractors
-    const options = [target];
-    while(options.length < 4) {
-        const randomOption = charData[Math.floor(Math.random() * charData.length)];
-        if (!options.find(o => o.id === randomOption.id)) {
-            options.push(randomOption);
-        }
-    }
-    
-    // Fisher-Yates Shuffle
-    for (let i = options.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [options[i], options[j]] = [options[j], options[i]];
-    }
-    
-    // RESET STATE FOR NEW PUZZLE
-    setPuzzleState({
-        target,
-        options,
-        wrongIds: [],
-        isSolved: false
+  const handleCharSelect = (char) => { setSelectedChar(char); setAiData({}); setActiveFeature(null); setError(null); setView('practice'); };
+  
+  const getGroupedChars = () => {
+    const items = charData.filter(c => c.type === category);
+    const groups = {};
+    items.forEach(item => {
+      if (!groups[item.subgroup]) groups[item.subgroup] = [];
+      groups[item.subgroup].push(item);
     });
+    return groups;
+  };
+
+  const runAi = async (feature, fn) => {
+    setError(null); setActiveFeature(feature); setIsAiLoading(true);
+    try { const res = await fn(selectedChar); setAiData(p => ({ ...p, [feature]: res })); }
+    catch (e) { setError("AI error. Try again."); setActiveFeature(null); }
+    finally { setIsAiLoading(false); }
+  };
+
+  const handlePlayAudio = async (kannadaChar) => {
+    const charId = selectedChar.id;
+    // Check Cache
+    if (audioCache[charId]) {
+        const audio = new Audio(audioCache[charId]);
+        audio.play().catch(e => console.error("Playback failed:", e));
+        return;
+    }
+
+    setIsAudioLoading(true);
+    setError(null);
+    try {
+        const url = await callGeminiAudio(kannadaChar);
+        setAudioCache(prev => ({ ...prev, [charId]: url }));
+        const audio = new Audio(url);
+        audio.play();
+    } catch (e) { setError("Pronunciation unavailable."); }
+    finally { setIsAudioLoading(false); }
+  };
+
+  const generatePuzzle = () => {
+    const target = charData[Math.floor(Math.random() * charData.length)];
+    let opts = [target];
+    while(opts.length < 4) {
+      const r = charData[Math.floor(Math.random() * charData.length)];
+      if(!opts.find(o => o.id === r.id)) opts.push(r);
+    }
+    setPuzzleState({ target, options: opts.sort(() => Math.random() - 0.5), wrongIds: [], isSolved: false });
     setView('puzzle');
   };
 
-  const handlePuzzleSelect = (option) => {
-    if (puzzleState.isSolved) return; 
-    
-    if (option.id === puzzleState.target.id) {
-        // Correct Answer
-        setPuzzleState(prev => ({
-            ...prev,
-            isSolved: true
-        }));
-    } else {
-        // Incorrect Answer - Add to wrong attempts list
-        setPuzzleState(prev => ({
-            ...prev,
-            wrongIds: [...prev.wrongIds, option.id]
-        }));
-    }
-  };
-
-  // --- AI HANDLERS ---
-  const runAiFeature = async (featureName, apiCallFn) => {
-    setError(null);
-    setActiveFeature(featureName);
-
-    // Check Cache first
-    if (cache[featureName]?.[selectedChar.id]) {
-      setAiData(prev => ({ ...prev, [featureName]: cache[featureName][selectedChar.id] }));
-      return;
-    }
-
-    setIsAiLoading(true);
-    try {
-      const result = await apiCallFn(selectedChar);
-      setAiData(prev => ({ ...prev, [featureName]: result }));
-      setCache(prev => ({ 
-        ...prev, 
-        [featureName]: { ...prev[featureName], [selectedChar.id]: result } 
-      }));
-    } catch (e) {
-      setError("Unable to load data. Please check your internet connection.");
-      setActiveFeature(null);
-    } finally {
-      setIsAiLoading(false);
-    }
-  };
-
-  const handleCheckWriting = async () => {
-    if (!padRef.current) return;
-    setActiveFeature('feedback');
-    setIsAiLoading(true);
-    setError(null);
-    try {
-      const b64 = padRef.current.getCanvasImage();
-      const result = await callGeminiVision(b64, selectedChar);
-      setAiData(prev => ({ ...prev, feedback: result }));
-    } catch (e) {
-      setError("Unable to analyze. Please check your internet connection.");
-      setActiveFeature(null);
-    } finally {
-      setIsAiLoading(false);
-    }
-  };
-
-  const progressCount = Object.keys(completedChars).length;
-  const totalChars = charData.length;
-
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 font-sans selection:bg-indigo-100">
-      
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-20 shadow-sm">
-        <div className="max-w-3xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            {view !== 'home' && (
-              <button onClick={goBack} className="p-2 hover:bg-slate-100 rounded-full mr-1 transition-colors">
-                <ChevronLeft size={24} className="text-slate-600" />
-              </button>
-            )}
-            <div>
-              <h1 className="text-xl font-bold bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent">
-                Akshara Setu
-              </h1>
-              <p className="text-xs text-slate-500 hidden sm:block">Learn Kannada through Hindi</p>
-            </div>
-          </div>
-          
-          <div className="flex gap-2">
-           <button onClick={() => { setView('home'); setCategory(null); setSelectedChar(null); }} className="p-2 text-slate-400 hover:text-indigo-600 transition-colors">
-             <Home size={20} />
-           </button>
-          </div>
+    <div className="min-h-screen bg-slate-50 text-slate-800 font-sans select-none overflow-y-auto flex flex-col" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+      <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm px-4 h-16 flex items-center justify-between flex-none">
+        <div className="flex items-center gap-2">
+          {view !== 'home' && <button onClick={() => setView(view === 'list' ? 'home' : 'list')} className="p-2 hover:bg-slate-100 rounded-full transition-colors"><ChevronLeft size={24} /></button>}
+          <h1 className="text-xl font-bold bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent">Akshara Setu</h1>
+        </div>
+        <div className="flex items-center gap-3">
+          {view === 'practice' && selectedChar && (
+            <button onClick={toggleComplete} className={`flex items-center gap-2 px-4 py-2 rounded-full border-2 text-sm transition-all shadow-sm ${completedChars[selectedChar.id] ? 'bg-green-50 border-green-500 text-green-700 font-bold' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
+              {completedChars[selectedChar.id] ? <CheckCircle2 size={18} className="fill-green-600 text-white" /> : <div className="w-4 h-4 rounded-full border-2 border-slate-300" />}
+              <span className="hidden sm:inline">Mastered</span>
+            </button>
+          )}
+          <button onClick={() => { setView('home'); setCategory(null); setSelectedChar(null); }} className="p-2 text-slate-400 hover:text-indigo-600 transition-colors"><Home size={24} /></button>
         </div>
       </header>
 
-      <main className="max-w-3xl mx-auto px-4 py-8">
-        
+      <main className="max-w-3xl mx-auto w-full px-4 py-6 flex-1">
         {view === 'home' && (
-          <div className="space-y-8 animate-in fade-in zoom-in duration-300">
-            
-            <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-4">
-               <div className="p-3 bg-green-100 text-green-600 rounded-full">
-                 <Trophy size={24} />
-               </div>
+          <div className="space-y-6 animate-in fade-in duration-300 pb-12">
+            <div className="bg-white p-6 rounded-2xl shadow-sm border-2 border-slate-100 flex items-center gap-5">
+               <div className="p-4 bg-green-100 text-green-600 rounded-2xl"><Trophy size={28} /></div>
                <div className="flex-1">
-                 <div className="flex justify-between text-sm font-medium mb-2">
-                   <span className="text-slate-700">Learning Progress</span>
-                   <span className="text-slate-500">{progressCount} / {totalChars} Mastered</span>
-                 </div>
-                 <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
-                   <div 
-                      className="h-full bg-green-500 rounded-full transition-all duration-500 ease-out"
-                      style={{ width: `${(progressCount / totalChars) * 100}%` }}
-                   ></div>
-                 </div>
+                 <div className="flex justify-between text-sm font-bold mb-2 text-slate-500 tracking-wider">PROGRESS <span>{Object.keys(completedChars).length} / {charData.length}</span></div>
+                 <div className="h-3 bg-slate-100 rounded-full overflow-hidden"><div className="h-full bg-green-500 transition-all duration-700 ease-out" style={{ width: `${(Object.keys(completedChars).length / charData.length) * 100}%` }}></div></div>
                </div>
             </div>
-
-            <div className="text-center space-y-2 mb-6">
-              <h2 className="text-3xl font-bold text-slate-800">Choose a Category</h2>
-              <p className="text-slate-500">Start your journey with vowels or consonants</p>
-            </div>
-
-            <div className="grid sm:grid-cols-2 gap-6">
-              <button 
-                onClick={() => { setCategory('vowel'); setView('list'); }}
-                className="group relative overflow-hidden bg-white p-8 rounded-2xl shadow-sm border border-slate-200 hover:shadow-lg hover:border-indigo-300 transition-all text-left"
-              >
-                <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                  <span className="text-8xl font-serif">ಅ</span>
-                </div>
-                <div className="relative z-10">
-                  <div className="w-12 h-12 bg-indigo-100 rounded-xl flex items-center justify-center text-indigo-600 mb-4 group-hover:scale-110 transition-transform">
-                    <BookOpen size={24} />
-                  </div>
-                  <h3 className="text-xl font-bold text-slate-800 mb-1">Swar (Vowels)</h3>
-                  <p className="text-slate-500 text-sm">अ - अः (15 Characters)</p>
-                </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+              <button onClick={() => { setCategory('vowel'); setView('list'); }} className="bg-white p-8 rounded-2xl shadow-sm border-2 border-slate-100 hover:border-indigo-400 text-left relative overflow-hidden group transition-all h-40">
+                <BookOpen className="text-indigo-500 mb-4" size={32} />
+                <h3 className="text-2xl font-bold text-slate-800">Vowels (Swar)</h3>
+                <p className="text-slate-500">ಅ - ಅಃ (15 Chars)</p>
+                <span className="absolute bottom-1 right-2 text-9xl opacity-10 font-serif select-none transition-transform group-hover:scale-110 pointer-events-none">ಅ</span>
               </button>
-
-              <button 
-                onClick={() => { setCategory('consonant'); setView('list'); }}
-                className="group relative overflow-hidden bg-white p-8 rounded-2xl shadow-sm border border-slate-200 hover:shadow-lg hover:border-orange-300 transition-all text-left"
-              >
-                <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                  <span className="text-8xl font-serif">ಕ</span>
-                </div>
-                <div className="relative z-10">
-                  <div className="w-12 h-12 bg-orange-100 rounded-xl flex items-center justify-center text-orange-600 mb-4 group-hover:scale-110 transition-transform">
-                    <PenTool size={24} />
-                  </div>
-                  <h3 className="text-xl font-bold text-slate-800 mb-1">Vyanjan (Consonants)</h3>
-                  <p className="text-slate-500 text-sm">क - ळ (34 Characters)</p>
-                </div>
+              <button onClick={() => { setCategory('consonant'); setView('list'); }} className="bg-white p-8 rounded-2xl shadow-sm border-2 border-slate-100 hover:border-orange-400 text-left relative overflow-hidden group transition-all h-40">
+                <PenTool className="text-orange-500 mb-4" size={32} />
+                <h3 className="text-2xl font-bold text-slate-800">Consonants</h3>
+                <p className="text-slate-500">ಕ - ಳ (34 Chars)</p>
+                <span className="absolute bottom-1 right-2 text-9xl opacity-10 font-serif select-none transition-transform group-hover:scale-110 pointer-events-none">ಕ</span>
               </button>
             </div>
-
-            {/* VISUAL MATCH PUZZLE CARD */}
-            <div className="mt-8">
-                <button 
-                  onClick={generatePuzzle}
-                  className="w-full group relative overflow-hidden bg-gradient-to-r from-violet-500 to-indigo-600 p-6 rounded-2xl shadow-md border border-indigo-400 hover:shadow-xl hover:scale-[1.01] transition-all text-left"
-                >
-                   <div className="absolute right-0 bottom-0 opacity-10 pointer-events-none">
-                      <Gamepad2 size={140} className="text-white transform translate-x-10 translate-y-10" />
-                   </div>
-                   
-                   <div className="relative z-10 flex items-center gap-6">
-                     <div className="w-16 h-16 bg-white/20 backdrop-blur-sm rounded-2xl flex items-center justify-center text-white shadow-inner border border-white/30">
-                        <Gamepad2 size={32} />
-                     </div>
-                     <div>
-                       <h3 className="text-2xl font-bold text-white mb-1">Visual Match Puzzle</h3>
-                       <p className="text-indigo-100 text-sm">Test your visual memory! Match Hindi characters to Kannada.</p>
-                     </div>
-                     <div className="ml-auto bg-white/20 p-2 rounded-full backdrop-blur-sm group-hover:bg-white/30 transition-colors">
-                        <ArrowRight className="text-white" size={24} />
-                     </div>
-                   </div>
-                </button>
-            </div>
-            
-            <div className="bg-indigo-50 p-4 rounded-lg flex items-start gap-3 text-sm text-indigo-800 mt-8 border border-indigo-100">
-              <Info className="shrink-0 mt-0.5" size={16} />
-              <p>
-                <strong>Tip:</strong> This app is designed for pen input. Use your stylus in Practice mode to trace characters.
-              </p>
-            </div>
+            <button onClick={generatePuzzle} className="w-full bg-gradient-to-r from-violet-600 to-indigo-600 p-6 rounded-2xl text-white flex items-center gap-5 shadow-xl transition-all group hover:scale-[1.01]">
+              <div className="p-4 bg-white/20 rounded-2xl group-hover:rotate-12 transition-transform"><Gamepad2 size={32} /></div>
+              <div className="text-left"><h4 className="font-bold text-xl">Visual Match Quiz</h4><p className="text-indigo-100">Test your recognition skills</p></div>
+              <ArrowRight className="ml-auto" size={24} />
+            </button>
           </div>
         )}
 
-        {view === 'puzzle' && puzzleState.target && (
-            <div className="max-w-xl mx-auto animate-in fade-in zoom-in duration-300">
-                <div className="text-center mb-8">
-                   <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Find the Kannada match for</span>
-                   <div className="mt-4 w-32 h-32 mx-auto bg-white rounded-3xl shadow-sm border border-slate-200 flex items-center justify-center">
-                      <span className="text-7xl font-serif text-slate-800">{puzzleState.target.hindi}</span>
-                   </div>
-                   <p className="mt-2 text-slate-400 font-mono">/{puzzleState.target.trans}/</p>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                   {puzzleState.options.map((option) => {
-                       const isWrong = puzzleState.wrongIds.includes(option.id);
-                       const isCorrect = puzzleState.isSolved && option.id === puzzleState.target.id;
-                       const showReveal = puzzleState.isSolved || isWrong; 
-
-                       let stateClass = "bg-white border-slate-200 hover:border-indigo-300 hover:shadow-md";
-                       
-                       if (puzzleState.isSolved) {
-                           if (isCorrect) {
-                               stateClass = "bg-green-100 border-green-400 shadow-md ring-1 ring-green-300";
-                           } else if (isWrong) {
-                               stateClass = "bg-red-50 border-red-300 shadow-sm opacity-75"; 
-                           } else {
-                               stateClass = "bg-slate-50 border-slate-100 opacity-50"; 
-                           }
-                       } else if (isWrong) {
-                           stateClass = "bg-red-50 border-red-300 shadow-sm"; 
-                       }
-
-                       return (
-                           <button
-                             key={option.id}
-                             disabled={puzzleState.isSolved || isWrong}
-                             onClick={() => handlePuzzleSelect(option)}
-                             className={`h-32 rounded-2xl border-2 flex flex-col items-center justify-center transition-all ${stateClass}`}
-                           >
-                             <span className="text-5xl font-bold mb-1 text-slate-800">{option.kannada}</span>
-                             {showReveal && (
-                                <div className="flex flex-col items-center animate-in fade-in duration-300">
-                                    <span className={`text-xs font-bold uppercase tracking-wider ${option.id === puzzleState.target.id ? 'text-green-700' : 'text-red-500'}`}>
-                                        {option.id === puzzleState.target.id ? 'Correct' : 'Incorrect'}
-                                    </span>
-                                    
-                                    <div className="flex items-center gap-1 mt-1 px-2 py-0.5 rounded text-sm font-medium text-slate-600">
-                                        <span className="text-xs text-slate-400">is</span>
-                                        <span className="font-serif text-xl font-bold">{option.hindi}</span>
-                                    </div>
-                                </div>
-                             )}
-                           </button>
-                       );
-                   })}
-                </div>
-
-                {puzzleState.isSolved && (
-                   <div className="mt-8 flex justify-center animate-in slide-in-from-bottom-4">
-                      <button 
-                        onClick={generatePuzzle}
-                        className="flex items-center gap-2 px-8 py-3 bg-indigo-600 text-white rounded-full font-bold shadow-lg shadow-indigo-200 hover:bg-indigo-700 hover:scale-105 transition-all"
-                      >
-                         <RefreshCw size={20} />
-                         Next Question
-                      </button>
-                   </div>
-                )}
-            </div>
-        )}
-
         {view === 'list' && (
-          <div className="animate-in slide-in-from-right-8 duration-300">
-             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold capitalize">
-                {category === 'vowel' ? 'Swar (Vowels)' : 'Vyanjan (Consonants)'}
-              </h2>
-              <span className="text-sm font-medium bg-slate-200 px-3 py-1 rounded-full text-slate-600">
-                {getCharacters().length} Chars
-              </span>
-             </div>
-
-             <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
-                {getCharacters().map((char) => (
-                  <CharacterCard 
-                    key={char.id} 
-                    data={char} 
-                    onClick={handleCharSelect} 
-                    isCompleted={!!completedChars[char.id]}
-                  />
-                ))}
-             </div>
+          <div className="space-y-8 animate-in slide-in-from-right-4 duration-300 pb-12">
+            {Object.entries(getGroupedChars()).map(([subgroup, items]) => (
+              <div key={subgroup} className="space-y-4">
+                <h3 className="text-base font-bold text-slate-400 uppercase tracking-widest pl-1">{subgroup}</h3>
+                <div className="grid grid-cols-3 sm:grid-cols-5 gap-4">
+                  {items.map(char => <CharacterCard key={char.id} data={char} onClick={handleCharSelect} isCompleted={!!completedChars[char.id]} />)}
+                </div>
+              </div>
+            ))}
           </div>
         )}
 
         {view === 'practice' && selectedChar && (
-          <div className="animate-in slide-in-from-bottom-8 duration-300 flex flex-col items-center pb-20">
-            
-            <div className="w-full flex items-center justify-between mb-8 max-w-md">
-              <button 
-                onClick={prevChar} 
-                disabled={!prevData}
-                className={`group flex items-center gap-2 p-2 rounded-xl transition-all ${!prevData ? 'opacity-0 pointer-events-none' : 'hover:bg-slate-100 text-slate-500 hover:text-indigo-600'}`}
-              >
+          <div className="flex flex-col animate-in slide-in-from-bottom-4 duration-300 pb-32">
+            {/* Header section with Target + Pronunciation */}
+            <div className="w-full flex items-center justify-between gap-2 max-w-lg mb-8">
+              <button onClick={() => navigateTo(-1)} disabled={!prevCharData} className={`w-16 h-16 sm:w-24 sm:h-24 flex flex-col items-center justify-center rounded-3xl border-2 transition-all ${!prevCharData ? 'opacity-0 pointer-events-none' : 'bg-white shadow-md hover:bg-slate-50 border-slate-200 text-indigo-400'}`}>
                 <ChevronLeft size={24} />
-                {prevData && (
-                  <div className="flex flex-col items-start">
-                    <span className="text-xs font-medium text-slate-400">Prev</span>
-                    <span className="text-xl font-bold font-serif">{prevData.kannada}</span>
-                  </div>
-                )}
+                {prevCharData && <span className="text-xl font-serif font-bold text-slate-700">{prevCharData.kannada}</span>}
               </button>
               
-              <div className="text-center">
-                <h3 className="text-xs text-slate-500 uppercase tracking-widest font-bold mb-2">Translating</h3>
-                <div className="flex items-center gap-6 text-4xl font-bold">
-                  <span className="text-slate-300 font-serif">{selectedChar.hindi}</span>
-                  <span className="text-slate-200 text-2xl">→</span>
-                  <span className="text-indigo-600 font-serif">{selectedChar.kannada}</span>
+              <div className="text-center flex-1">
+                <div className="flex flex-col items-center justify-center">
+                  <div className="flex items-center gap-3">
+                    {/* ENHANCED VISIBILITY HINDI LETTER */}
+                    <span className="text-5xl text-slate-800 font-serif font-black">{selectedChar.hindi}</span>
+                    <div className="flex items-center gap-2">
+                        <span className="text-7xl sm:text-9xl text-indigo-600 font-serif font-black">{selectedChar.kannada}</span>
+                        {/* HERO PRONUNCIATION BUTTON */}
+                        <button 
+                            onClick={() => handlePlayAudio(selectedChar.kannada)}
+                            disabled={isAudioLoading}
+                            className={`p-3 rounded-2xl border-2 transition-all ${isAudioLoading ? 'bg-slate-100 border-slate-200 text-slate-300' : 'bg-white border-indigo-200 text-indigo-600 hover:bg-indigo-50 hover:border-indigo-400 shadow-md scale-110'}`}
+                        >
+                            {isAudioLoading ? <Loader2 className="animate-spin" size={24} /> : <Volume2 size={28} />}
+                        </button>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 mt-2">
+                    <span className="px-4 py-1 bg-indigo-100 text-indigo-600 rounded-full text-base font-mono font-bold">/{selectedChar.trans}/</span>
+                    <span className="text-xs font-bold text-slate-400 uppercase tracking-widest bg-slate-200 px-3 py-1 rounded-full">{currentIndex + 1} / {currentList.length}</span>
+                  </div>
                 </div>
-                <p className="text-sm text-slate-400 font-mono mt-2 tracking-wide">/{selectedChar.trans}/</p>
               </div>
 
-              <button 
-                onClick={nextChar} 
-                disabled={!nextData}
-                className={`group flex items-center gap-2 p-2 rounded-xl transition-all ${!nextData ? 'opacity-0 pointer-events-none' : 'hover:bg-slate-100 text-slate-500 hover:text-indigo-600'}`}
-              >
-                {nextData && (
-                  <div className="flex flex-col items-end">
-                    <span className="text-xs font-medium text-slate-400">Next</span>
-                    <span className="text-xl font-bold font-serif">{nextData.kannada}</span>
-                  </div>
-                )}
-                <ChevronLeft size={24} className="rotate-180" />
+              <button onClick={() => navigateTo(1)} disabled={!nextCharData} className={`w-16 h-16 sm:w-24 sm:h-24 flex flex-col items-center justify-center rounded-3xl border-2 transition-all ${!nextCharData ? 'opacity-0 pointer-events-none' : 'bg-white shadow-md hover:bg-slate-50 border-slate-200 text-indigo-400'}`}>
+                <ChevronRight size={24} />
+                {nextCharData && <span className="text-xl font-serif font-bold text-slate-700">{nextCharData.kannada}</span>}
               </button>
             </div>
 
-            <div className="mb-6">
-               <button 
-                 onClick={toggleComplete}
-                 className={`flex items-center gap-2 px-6 py-2 rounded-full border shadow-sm transition-all duration-300 ${
-                   completedChars[selectedChar.id] 
-                   ? 'bg-green-100 border-green-300 text-green-700' 
-                   : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
-                 }`}
-               >
-                 {completedChars[selectedChar.id] ? (
-                   <>
-                     <CheckCircle2 size={18} className="fill-green-600 text-white" />
-                     <span className="font-semibold">Mastered</span>
-                   </>
-                 ) : (
-                   <>
-                     <div className="w-4 h-4 rounded-full border-2 border-slate-300"></div>
-                     <span className="font-medium">Mark as Mastered</span>
-                   </>
-                 )}
-               </button>
-            </div>
+            <WritingPad ref={padRef} character={selectedChar.kannada} onClear={() => { setActiveFeature(null); setAiData({}); }} />
 
-            <div className="mb-8">
-               <WritingPad 
-                ref={padRef}
-                character={selectedChar.kannada} 
-                onClear={() => {
-                   setAiData(prev => ({ ...prev, feedback: null }));
-                   setActiveFeature(null);
-                }} 
-              />
-            </div>
-
-            <div className="w-full max-w-md space-y-6">
-              
-              {/* Feature Selection Grid */}
-              <div className="grid grid-cols-5 gap-2">
-                <button 
-                  onClick={() => runAiFeature('tutor', callGeminiTutor)}
-                  disabled={isAiLoading}
-                  className={`flex flex-col items-center justify-center gap-1.5 p-2 bg-white border rounded-xl transition-all group shadow-sm ${activeFeature === 'tutor' ? 'border-violet-400 bg-violet-50 ring-1 ring-violet-200' : 'border-slate-200 hover:bg-slate-50'}`}
-                >
-                  <div className={`p-2 rounded-full transition-transform ${activeFeature === 'tutor' ? 'bg-violet-200 text-violet-700' : 'bg-violet-50 text-violet-500'}`}>
-                    <Sparkles size={18} />
-                  </div>
-                  <span className="text-[10px] font-bold text-slate-600">Explain</span>
-                </button>
-
-                 <button 
-                  onClick={() => runAiFeature('similar', callGeminiSimilar)}
-                  disabled={isAiLoading}
-                  className={`flex flex-col items-center justify-center gap-1.5 p-2 bg-white border rounded-xl transition-all group shadow-sm ${activeFeature === 'similar' ? 'border-amber-400 bg-amber-50 ring-1 ring-amber-200' : 'border-slate-200 hover:bg-slate-50'}`}
-                >
-                  <div className={`p-2 rounded-full transition-transform ${activeFeature === 'similar' ? 'bg-amber-200 text-amber-700' : 'bg-amber-50 text-amber-500'}`}>
-                    <Split size={18} />
-                  </div>
-                  <span className="text-[10px] font-bold text-slate-600">Compare</span>
-                </button>
-
-                <button 
-                  onClick={() => runAiFeature('usage', callGeminiUsage)}
-                  disabled={isAiLoading}
-                  className={`flex flex-col items-center justify-center gap-1.5 p-2 bg-white border rounded-xl transition-all group shadow-sm ${activeFeature === 'usage' ? 'border-cyan-400 bg-cyan-50 ring-1 ring-cyan-200' : 'border-slate-200 hover:bg-slate-50'}`}
-                >
-                  <div className={`p-2 rounded-full transition-transform ${activeFeature === 'usage' ? 'bg-cyan-200 text-cyan-700' : 'bg-cyan-50 text-cyan-500'}`}>
-                    <Quote size={18} />
-                  </div>
-                  <span className="text-[10px] font-bold text-slate-600">Sentence</span>
-                </button>
-
-                <button 
-                  onClick={() => runAiFeature('quiz', callGeminiQuiz)}
-                  disabled={isAiLoading}
-                  className={`flex flex-col items-center justify-center gap-1.5 p-2 bg-white border rounded-xl transition-all group shadow-sm ${activeFeature === 'quiz' ? 'border-indigo-400 bg-indigo-50 ring-1 ring-indigo-200' : 'border-slate-200 hover:bg-slate-50'}`}
-                >
-                  <div className={`p-2 rounded-full transition-transform ${activeFeature === 'quiz' ? 'bg-indigo-200 text-indigo-700' : 'bg-indigo-50 text-indigo-500'}`}>
-                    <Brain size={18} />
-                  </div>
-                  <span className="text-[10px] font-bold text-slate-600">Test</span>
-                </button>
-
-                <button 
-                  onClick={handleCheckWriting}
-                  disabled={isAiLoading}
-                  className={`flex flex-col items-center justify-center gap-1.5 p-2 bg-white border rounded-xl transition-all group shadow-sm ${activeFeature === 'feedback' ? 'border-pink-400 bg-pink-50 ring-1 ring-pink-200' : 'border-slate-200 hover:bg-slate-50'}`}
-                >
-                  <div className={`p-2 rounded-full transition-transform ${activeFeature === 'feedback' ? 'bg-pink-200 text-pink-700' : 'bg-pink-50 text-pink-500'}`}>
-                     <Check size={18} />
-                  </div>
-                  <span className="text-[10px] font-bold text-slate-600">Check</span>
-                </button>
+            <div className="w-full max-w-lg space-y-8 pt-8">
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                {[
+                  { id: 'tutor', icon: <Sparkles size={20} />, label: 'Explain', fn: () => runAi('tutor', callGeminiTutor) },
+                  { id: 'story', icon: <BookHeart size={20} />, label: '✨ Story', fn: () => runAi('story', callGeminiStory) },
+                  { id: 'similar', icon: <Split size={20} />, label: 'Similar', fn: () => runAi('similar', callGeminiSimilar) },
+                  { id: 'usage', icon: <Quote size={20} />, label: 'Usage', fn: () => runAi('usage', callGeminiUsage) },
+                  { id: 'quiz', icon: <Brain size={20} />, label: 'Quiz', fn: () => runAi('quiz', callGeminiQuiz) },
+                  { id: 'feedback', icon: <Check size={20} />, label: 'Verify', fn: () => runAi('feedback', async () => callGeminiVision(padRef.current.getCanvasImage(), selectedChar)) }
+                ].map(tool => (
+                  <button key={tool.id} onClick={tool.fn} className={`flex flex-col items-center justify-center py-3 rounded-2xl border-2 transition-all ${activeFeature === tool.id ? 'bg-indigo-50 border-indigo-500 text-indigo-700 ring-2 ring-indigo-200 shadow-inner' : 'bg-white border-slate-200 text-slate-500 hover:border-indigo-300'}`}>
+                    {tool.icon}<span className="text-[8px] font-black mt-1.5 uppercase tracking-widest text-center">{tool.label}</span>
+                  </button>
+                ))}
               </div>
 
-              {isAiLoading && (
-                <div className="flex justify-center p-8">
-                  <Loader2 className="animate-spin text-slate-400" size={32} />
-                </div>
-              )}
-              
-              {error && (
-                <div className="flex items-center gap-2 p-3 bg-red-50 text-red-700 rounded-xl text-sm animate-in fade-in slide-in-from-bottom-2">
-                  <AlertCircle size={16} className="shrink-0" />
-                  <p>{error}</p>
-                </div>
-              )}
+              {isAiLoading && <div className="flex justify-center py-8"><Loader2 className="animate-spin text-indigo-400" size={40} /></div>}
+              {error && <div className="p-4 bg-red-50 text-red-700 border-2 border-red-200 rounded-2xl text-sm flex items-center gap-3"><AlertCircle size={20}/> {error}</div>}
 
-              {/* 1. TUTOR RESULT */}
-              {activeFeature === 'tutor' && aiData.tutor && (
-                <div className="bg-white rounded-xl p-5 border border-violet-200 shadow-md animate-in slide-in-from-bottom-2 fade-in">
-                  <div className="flex items-center justify-between mb-3 text-violet-700 font-bold">
-                    <div className="flex items-center gap-2">
-                      <Sparkles size={18} />
-                      <h3>AI Tutor</h3>
-                    </div>
-                  </div>
-                  
-                  <div className="space-y-4">
-                    <div className="bg-violet-50 p-3 rounded-lg">
-                      <p className="text-xs text-violet-500 font-bold uppercase mb-1">Mnemonic</p>
-                      <p className="text-slate-700 text-sm leading-relaxed">{aiData.tutor.mnemonic}</p>
-                    </div>
-
-                    <div>
-                      <p className="text-xs text-slate-400 font-bold uppercase mb-2">Example Words</p>
-                      <div className="space-y-2">
-                        {aiData.tutor.words?.map((word, i) => (
-                           <div key={i} className="flex flex-col p-3 rounded-lg border border-slate-100 bg-slate-50">
-                             <div className="flex items-baseline justify-between mb-1">
-                                <span className="font-bold text-lg text-slate-800">{word.kannada}</span>
-                                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider bg-white px-2 py-0.5 rounded border border-slate-100 text-center min-w-[4rem]">
-                                  {word.meaning || word.hindi}
-                                </span>
-                             </div>
-                             <div className="flex items-center gap-3 text-sm">
-                                <span className="text-slate-600 font-mono bg-white px-1.5 rounded border border-slate-200 text-xs shadow-sm">
-                                  {word.english_pronunciation}
-                                </span>
-                                <span className="text-slate-600 font-medium">
-                                  {word.hindi_pronunciation}
-                                </span>
-                             </div>
+              {activeFeature && (
+                <div ref={resultRef} className="bg-white p-6 rounded-3xl border-2 border-slate-100 shadow-2xl animate-in slide-in-from-bottom-6 duration-300">
+                   {activeFeature === 'tutor' && aiData.tutor && (
+                     <div className="space-y-6">
+                       <div>
+                         <p className="font-bold text-indigo-600 uppercase text-xs tracking-widest mb-2">Mnemonic / याद रखने का तरीका</p>
+                         <p className="italic text-2xl leading-relaxed text-slate-800 font-bold">"{aiData.tutor.mnemonic}"</p>
+                       </div>
+                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                         {aiData.tutor.words?.map((w,i) => (
+                           <div key={i} className="p-5 bg-indigo-50 rounded-2xl border-2 border-indigo-100">
+                             <div className="font-bold text-3xl text-indigo-800">{w.kannada}</div>
+                             <div className="text-xl text-indigo-900 font-black mt-2">हिंदी: {w.meaning}</div>
+                             <div className="text-sm text-slate-500 mt-1 font-mono uppercase tracking-tighter">{w.english_pronunciation} / {w.hindi_pronunciation}</div>
                            </div>
-                        ))}
+                         ))}
+                       </div>
+                     </div>
+                   )}
+
+                   {activeFeature === 'story' && aiData.story && (
+                     <div className="space-y-6 text-center">
+                        <div className="p-6 bg-violet-50 rounded-2xl border-2 border-violet-100 shadow-inner">
+                          <p className="text-xs font-bold text-violet-600 uppercase tracking-widest mb-4">✨ Tiny AI Story / छोटी कहानी</p>
+                          <p className="text-3xl font-serif text-slate-800 font-black leading-relaxed mb-6">{aiData.story.kannada_story}</p>
+                          <hr className="border-violet-100 mb-6" />
+                          <p className="text-4xl text-slate-900 font-black leading-relaxed mb-3">{aiData.story.hindi_script_story}</p>
+                          <p className="text-2xl text-violet-950 font-black italic mt-4 bg-white/60 p-4 rounded-2xl shadow-sm">{aiData.story.hindi_translation}</p>
+                        </div>
+                     </div>
+                   )}
+
+                   {activeFeature === 'usage' && aiData.usage && (
+                     <div className="text-center p-4 space-y-6">
+                        <div>
+                          <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Kannada Sentence / कन्नड़ वाक्य</p>
+                          <p className="text-3xl font-serif text-slate-800 font-black leading-tight mb-2">{aiData.usage.sentence}</p>
+                        </div>
+                        <div className="p-6 bg-slate-50 rounded-2xl border-2 border-indigo-200 shadow-inner text-center">
+                          <p className="text-xs font-bold text-indigo-600 uppercase tracking-widest mb-4">Hindi Script Representation / हिंदी लिपि</p>
+                          <p className="text-5xl text-slate-900 font-black leading-relaxed mb-1">{aiData.usage.hindi_script_representation}</p>
+                          <p className="text-base text-slate-500 font-mono italic mt-2">/{aiData.usage.transliteration}/</p>
+                        </div>
+                        <div className="bg-cyan-50 p-6 rounded-2xl border-2 border-cyan-100 shadow-sm">
+                          <p className="text-xs font-bold text-cyan-600 uppercase tracking-widest mb-1">Hindi Meaning / हिंदी अर्थ</p>
+                          <p className="text-3xl text-cyan-950 font-black leading-snug">{aiData.usage.hindi_translation}</p>
+                        </div>
+                     </div>
+                   )}
+
+                   {activeFeature === 'feedback' && aiData.feedback && (
+                     <div className="flex items-start gap-6">
+                       <div className="p-5 bg-pink-50 rounded-2xl text-pink-600 flex-none shadow-md border-2 border-pink-100"><Star size={40} className="fill-pink-600" /></div>
+                       <div className="pt-1">
+                         <p className="text-2xl font-black text-slate-800 mb-2 text-pink-700">Accuracy: {aiData.feedback.rating}/5</p>
+                         <p className="text-xl text-slate-900 font-black leading-relaxed">{aiData.feedback.feedback}</p>
+                       </div>
+                     </div>
+                   )}
+
+                   {activeFeature === 'similar' && aiData.similar && (
+                     <div className="space-y-6">
+                        <p className="font-bold text-amber-600 uppercase text-xs tracking-widest">Confusing Pair / भ्रमित करने वाली जोड़ी</p>
+                        <div className="flex items-center gap-6 p-6 bg-amber-50 rounded-3xl border-2 border-amber-200 justify-center shadow-inner">
+                            <span className="text-7xl font-black text-slate-800">{selectedChar.kannada}</span>
+                            <span className="text-slate-400 font-black text-2xl">VS</span>
+                            <span className="text-7xl font-black text-amber-600">{aiData.similar.similar_char}</span>
+                        </div>
+                        <p className="text-2xl text-slate-950 font-black text-center italic leading-relaxed bg-amber-100/50 p-6 rounded-3xl border-2 border-amber-100">"{aiData.similar.difference}"</p>
+                     </div>
+                   )}
+
+                   {activeFeature === 'quiz' && aiData.quiz && (
+                      <div className="space-y-6">
+                        <p className="text-2xl font-black text-slate-800">{aiData.quiz.question}</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                           {aiData.quiz.options.map((o,i) => (
+                             <button key={i} onClick={() => setAiData(p => ({ ...p, quiz: { ...p.quiz, sel: i } }))} className={`p-6 rounded-2xl border-4 text-2xl transition-all font-black shadow-sm ${aiData.quiz.sel === i ? (i === aiData.quiz.correctIndex ? 'bg-green-100 border-green-500 text-green-700 shadow-md' : 'bg-red-50 border-red-500 text-red-700') : 'bg-white border-slate-100 hover:border-indigo-400'}`}>{o}</button>
+                           ))}
+                        </div>
+                        {aiData.quiz.sel !== undefined && (
+                          <div className="p-6 bg-slate-100 rounded-2xl text-xl font-bold border-2 border-slate-200 text-slate-950 shadow-inner">{aiData.quiz.explanation}</div>
+                        )}
                       </div>
-                    </div>
-                  </div>
+                   )}
                 </div>
               )}
+            </div>
+          </div>
+        )}
 
-              {/* 2. SIMILAR RESULT */}
-              {activeFeature === 'similar' && aiData.similar && (
-                <div className="bg-white rounded-xl p-5 border border-amber-200 shadow-md animate-in slide-in-from-bottom-2 fade-in">
-                  <div className="flex items-center justify-between mb-3 text-amber-700 font-bold">
-                    <div className="flex items-center gap-2">
-                       <Split size={18} />
-                       <h3>Similar Characters</h3>
-                    </div>
-                  </div>
-                  
-                  <div className="flex items-center justify-center gap-8 mb-4">
-                    <div className="text-center">
-                      <div className="text-4xl font-serif text-slate-800 mb-1">{selectedChar.kannada}</div>
-                      <div className="text-xs text-slate-400 uppercase">Current</div>
-                    </div>
-                    <div className="h-12 w-px bg-slate-200"></div>
-                    <div className="text-center">
-                      <div className="text-4xl font-serif text-amber-600 mb-1">{aiData.similar.similar_char}</div>
-                      <div className="text-xs text-amber-500 uppercase font-bold">Similar</div>
-                    </div>
-                  </div>
-
-                  <div className="bg-amber-50 p-3 rounded-lg">
-                    <p className="text-xs text-amber-600 font-bold uppercase mb-1">The Difference</p>
-                    <p className="text-slate-700 text-sm leading-relaxed">{aiData.similar.difference}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* 3. FEEDBACK RESULT */}
-              {activeFeature === 'feedback' && aiData.feedback && (
-                <div className="bg-white rounded-xl p-5 border border-pink-200 shadow-md animate-in slide-in-from-bottom-2 fade-in">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2 text-pink-700 font-bold">
-                      <Check size={18} />
-                      <h3>Feedback</h3>
-                    </div>
-                    <div className="flex gap-1">
-                      {[1,2,3,4,5].map(s => (
-                        <Star 
-                          key={s} 
-                          size={16} 
-                          className={s <= aiData.feedback.rating ? "fill-yellow-400 text-yellow-400" : "text-slate-200"} 
-                        />
-                      ))}
-                    </div>
-                  </div>
-                  
-                  <div className="bg-pink-50 p-3 rounded-lg">
-                    <p className="text-slate-700 text-sm leading-relaxed">{aiData.feedback.feedback}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* 4. QUIZ RESULT (NEW) */}
-              {activeFeature === 'quiz' && aiData.quiz && (
-                 <div className="bg-white rounded-xl p-5 border border-indigo-200 shadow-md animate-in slide-in-from-bottom-2 fade-in">
-                    <div className="flex items-center gap-2 mb-4 text-indigo-700 font-bold">
-                       <Brain size={18} />
-                       <h3>Pop Quiz</h3>
-                    </div>
-                    
-                    <p className="text-lg font-medium text-slate-800 mb-4">{aiData.quiz.question}</p>
-                    
-                    <div className="space-y-2">
-                       {aiData.quiz.options.map((opt, i) => (
-                         <button 
-                           key={i}
-                           className={`w-full text-left p-3 rounded-lg border transition-all ${
-                             aiData.quiz.selected === i 
-                               ? i === aiData.quiz.correctIndex 
-                                 ? 'bg-green-50 border-green-300 text-green-800'
-                                 : 'bg-red-50 border-red-300 text-red-800'
-                               : 'bg-white border-slate-200 hover:border-indigo-300 text-slate-700'
-                           }`}
-                           onClick={() => {
-                             if (aiData.quiz.selected !== undefined) return;
-                             setAiData(prev => ({
-                               ...prev,
-                               quiz: { ...prev.quiz, selected: i }
-                             }));
-                           }}
-                         >
-                           <div className="flex items-center justify-between">
-                              <span>{opt}</span>
-                              {aiData.quiz.selected === i && (
-                                i === aiData.quiz.correctIndex 
-                                  ? <CheckCircle2 size={18} className="text-green-600" />
-                                  : <AlertCircle size={18} className="text-red-500" />
-                              )}
-                           </div>
-                         </button>
-                       ))}
-                    </div>
-
-                    {aiData.quiz.selected !== undefined && (
-                      <div className="mt-4 p-3 bg-slate-50 rounded-lg text-sm text-slate-600">
-                        <strong>Explanation:</strong> {aiData.quiz.explanation}
-                      </div>
+        {view === 'puzzle' && (
+          <div className="max-w-md mx-auto space-y-8 animate-in fade-in duration-300 pb-12">
+            <div className="text-center">
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">MATCH KANNADA FOR</p>
+              <div className="w-32 h-32 bg-white border-4 border-indigo-50 rounded-3xl mx-auto flex items-center justify-center text-7xl font-serif shadow-xl text-indigo-600 font-black">{puzzleState.target.hindi}</div>
+            </div>
+            <div className="grid grid-cols-2 gap-4 py-4 px-1">
+              {puzzleState.options.map(o => {
+                const isSel = puzzleState.wrongIds.includes(o.id) || (puzzleState.isSolved && o.id === puzzleState.target.id);
+                const isCorrect = puzzleState.isSolved && o.id === puzzleState.target.id;
+                return (
+                  <button key={o.id} disabled={puzzleState.isSolved} onClick={() => {
+                    if(o.id === puzzleState.target.id) setPuzzleState(p => ({ ...p, isSolved: true }));
+                    else setPuzzleState(p => ({ ...p, wrongIds: [...p.wrongIds, o.id] }));
+                  }} className={`h-48 rounded-3xl border-2 flex flex-col items-center justify-center transition-all ${isCorrect ? 'bg-green-100 border-green-500 shadow-md ring-4 ring-green-50' : isSel ? 'bg-red-50 border-red-200 opacity-60 scale-95' : 'bg-white border-slate-200 hover:border-indigo-400 hover:shadow-lg'}`}>
+                    <span className="text-6xl font-bold mb-3">{o.kannada}</span>
+                    {isSel && (
+                        <div className="animate-in fade-in zoom-in duration-300 flex flex-col items-center">
+                            <span className="text-xs font-bold uppercase tracking-widest text-red-400 mb-1">IS</span>
+                            <span className="text-5xl font-black text-red-800 font-serif leading-none">{o.hindi}</span>
+                        </div>
                     )}
-                 </div>
-              )}
-
-              {/* 5. USAGE RESULT (NEW) */}
-              {activeFeature === 'usage' && aiData.usage && (
-                <div className="bg-white rounded-xl p-5 border border-cyan-200 shadow-md animate-in slide-in-from-bottom-2 fade-in">
-                  <div className="flex items-center gap-2 mb-4 text-cyan-700 font-bold">
-                     <Quote size={18} />
-                     <h3>Context Usage</h3>
-                  </div>
-
-                  <div className="text-center mb-6">
-                    <p className="text-2xl text-slate-800 font-serif leading-relaxed mb-2">
-                      {aiData.usage.sentence}
-                    </p>
-                    <p className="text-sm text-slate-500 font-mono">{aiData.usage.transliteration}</p>
-                  </div>
-
-                  <div className="bg-cyan-50 p-3 rounded-lg flex items-start gap-2">
-                    <span className="text-cyan-700 font-bold shrink-0">Hindi:</span>
-                    <p className="text-slate-700 text-sm">{aiData.usage.hindi_translation}</p>
-                  </div>
-                </div>
-              )}
-
-              {!activeFeature && !isAiLoading && (
-                 <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100 text-left">
-                  <h4 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
-                    <RefreshCw size={16} className="text-indigo-500"/>
-                    Writing Guide
-                  </h4>
-                  <ul className="text-slate-600 text-sm space-y-2 list-disc list-inside">
-                    <li>Kannada script is <strong>circular</strong>. Try to keep curves smooth.</li>
-                    <li>Most letters start from the <strong>Top-Left</strong> or the main circle.</li>
-                    <li>Write from <strong>Left to Right</strong>, then Top to Bottom.</li>
-                  </ul>
-                </div>
-              )}
-
+                  </button>
+                );
+              })}
             </div>
-
+            {puzzleState.isSolved && <button onClick={generatePuzzle} className="w-full p-6 bg-indigo-600 text-white rounded-3xl font-black text-2xl shadow-xl hover:scale-[1.02] transition-transform mb-12">Next Challenge</button>}
           </div>
         )}
       </main>
