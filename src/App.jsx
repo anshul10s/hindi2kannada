@@ -46,6 +46,13 @@ const pcmToWav = (pcmData, sampleRate) => {
   return new Blob([buffer], { type: 'audio/wav' });
 };
 
+// --- HAPTIC HELPER ---
+const triggerHaptic = (pattern) => {
+  if (typeof window !== 'undefined' && window.navigator && window.navigator.vibrate) {
+    window.navigator.vibrate(pattern);
+  }
+};
+
 const callGeminiAudio = async (kannadaChar, retryCount = 0) => {
   const payload = {
     contents: [{ parts: [{ text: kannadaChar }] }],
@@ -198,7 +205,7 @@ const charData = [
   { id: 'c31', hindi: 'ष', kannada: 'ಷ', trans: 'sha', type: 'consonant', subgroup: 'Misc (अन्य)' },
   { id: 'c32', hindi: 'स', kannada: 'ಸ', trans: 'sa', type: 'consonant', subgroup: 'Misc (अन्य)' },
   { id: 'c33', hindi: 'ह', kannada: 'ಹ', trans: 'ha', type: 'consonant', subgroup: 'Misc (अन्य)' },
-  { id: 'c34', hindi: 'ळ', kannada: 'ಳ', trans: 'la', type: 'consonant', subgroup: 'Misc (अन्य)' },
+  { id: 'c34', hindi: 'ಳ', kannada: 'ಳ', trans: 'la', type: 'consonant', subgroup: 'Misc (अन्य)' },
 ];
 
 // --- COMPONENTS ---
@@ -216,7 +223,10 @@ const WritingPad = forwardRef(({ character, onClear, theme }, ref) => {
       tCtx.fillStyle = '#ffffff'; tCtx.fillRect(0, 0, canvas.width, canvas.height);
       tCtx.drawImage(canvas, 0, 0); return tCtx.canvas.toDataURL('image/png').split(',')[1];
     },
-    clear: () => { if (canvasRef.current) canvasRef.current.getContext('2d').clearRect(0, 0, 9999, 9999); }
+    clear: () => { 
+      if (canvasRef.current) canvasRef.current.getContext('2d').clearRect(0, 0, 9999, 9999);
+      triggerHaptic(30); 
+    }
   }));
 
   useEffect(() => {
@@ -242,6 +252,7 @@ const WritingPad = forwardRef(({ character, onClear, theme }, ref) => {
 
   const start = (e) => {
     e.preventDefault(); if (!canvasRef.current) return;
+    triggerHaptic(15); // Tiny haptic on start drawing
     const r = canvasRef.current.getBoundingClientRect();
     const x = (e.type.includes('touch') ? e.touches[0].clientX : e.clientX) - r.left;
     const y = (e.type.includes('touch') ? e.touches[0].clientY : e.clientY) - r.top;
@@ -265,7 +276,7 @@ const WritingPad = forwardRef(({ character, onClear, theme }, ref) => {
           <span className={`font-bold transition-colors ${theme === 'dark' ? 'text-slate-700' : 'text-slate-50'}`} style={{ fontSize: '260px', fontFamily: 'serif' }}>{character}</span>
         </div>
         <canvas ref={canvasRef} onMouseDown={start} onMouseMove={draw} onMouseUp={() => setIsDrawing(false)} onMouseLeave={() => setIsDrawing(false)} onTouchStart={start} onTouchMove={draw} onTouchEnd={() => setIsDrawing(false)} className="absolute inset-0 w-full h-full cursor-crosshair touch-none z-10" />
-        <button onClick={() => { if(canvasRef.current) canvasRef.current.getContext('2d').clearRect(0,0,9999,9999); if(onClear)onClear(); }} className="absolute bottom-4 right-4 z-20 flex items-center gap-2 px-6 py-3 bg-slate-900/80 backdrop-blur text-white rounded-full text-sm font-bold shadow-2xl hover:bg-slate-700 active:scale-95 transition-all"><Eraser size={18} /> Clear</button>
+        <button onClick={() => { if(canvasRef.current) { canvasRef.current.getContext('2d').clearRect(0,0,9999,9999); triggerHaptic(30); } if(onClear)onClear(); }} className="absolute bottom-4 right-4 z-20 flex items-center gap-2 px-6 py-3 bg-slate-900/80 backdrop-blur text-white rounded-full text-sm font-bold shadow-2xl hover:bg-slate-700 active:scale-95 transition-all"><Eraser size={18} /> Clear</button>
       </div>
     </div>
   );
@@ -423,6 +434,7 @@ export default function App() {
 
   const handlePuzzleGuess = (option) => {
     if (option.id === puzzleState.target.id) {
+        triggerHaptic(50); // Firm pulse for success
         setPuzzleStats(prev => ({
             ...prev,
             score: prev.score + 2,
@@ -431,6 +443,7 @@ export default function App() {
         }));
         setPuzzleState(prev => ({ ...prev, isSolved: true }));
     } else {
+        triggerHaptic([100, 50, 100]); // Double pulse for error
         setPuzzleStats(prev => ({ ...prev, score: Math.max(0, prev.score - 1), streak: 0 }));
         setPuzzleState(prev => ({ ...prev, wrongIds: [...prev.wrongIds, option.id], isFirstAttempt: false }));
     }
@@ -562,7 +575,7 @@ export default function App() {
                   { id: 'quiz', icon: <Brain size={18} />, label: 'Quiz', fn: () => run('quiz', callGeminiQuiz) },
                   { id: 'feedback', icon: <Check size={18} />, label: 'Verify', fn: async () => run('feedback', () => callGeminiVision(padRef.current.getCanvasImage(), selectedChar)) }
                 ].map(tool => (
-                  <button key={tool.id} onClick={tool.fn} className={`flex flex-col items-center justify-center py-3 rounded-2xl border-2 transition-all active:scale-95 ${activeFeature === tool.id ? 'bg-indigo-50 border-indigo-400 text-white shadow-xl' : (theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-400 hover:border-indigo-500' : 'bg-white border-slate-100 text-slate-500 hover:border-indigo-300 shadow-sm')}`}>
+                  <button key={tool.id} onClick={tool.fn} className={`flex flex-col items-center justify-center py-3 rounded-2xl border-2 transition-all active:scale-95 ${activeFeature === tool.id ? 'bg-indigo-500 border-indigo-400 text-white shadow-xl' : (theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-400 hover:border-indigo-500' : 'bg-white border-slate-100 text-slate-500 hover:border-indigo-300 shadow-sm')}`}>
                     {tool.icon}<span className="text-[8px] font-black mt-1 uppercase tracking-tighter">{tool.label}</span>
                   </button>
                 ))}
@@ -577,7 +590,7 @@ export default function App() {
                      <div className="text-center p-2 space-y-4 sm:space-y-6">
                         <p className="text-2xl sm:text-3xl font-serif text-indigo-500 font-black leading-tight">{aiData.usage.sentence}</p>
                         <div className={`p-4 sm:p-6 rounded-[2rem] border-2 shadow-inner ${theme === 'dark' ? 'bg-slate-900/50 border-slate-700' : 'bg-slate-50 border-indigo-100'}`}>
-                          <p className="text-[9px] sm:text-[10px] font-bold text-indigo-500 uppercase tracking-widest mb-2 sm:mb-3">Sounds (Devanagari)</p>
+                          <p className="text-[9px] sm:text-[10px] font-bold text-indigo-500 uppercase tracking-widest mb-2 sm:mb-3">Phonetic Sounds (Devanagari)</p>
                           <p className={`text-3xl sm:text-4xl font-black leading-relaxed ${theme === 'dark' ? 'text-white' : 'text-slate-950'}`}>{aiData.usage.hindi_script_representation}</p>
                         </div>
                         <div className={`p-4 rounded-2xl border-2 ${theme === 'dark' ? 'bg-indigo-900/20 border-indigo-800' : 'bg-cyan-50 border-cyan-100'}`}>
@@ -615,7 +628,7 @@ export default function App() {
         )}
 
         {view === 'puzzle' && (
-          <div className="max-w-md mx-auto space-y-4 sm:space-y-8 animate-in fade-in duration-300 pb-20 pt-2 flex flex-col items-center">
+          <div className="max-w-md mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 pb-20 pt-2 flex flex-col items-center">
             
             {/* SUBTLE PROGRESS BAR AT TOP */}
             <div className="w-full px-2 pt-2">
