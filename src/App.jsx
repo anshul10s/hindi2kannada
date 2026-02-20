@@ -193,10 +193,10 @@ const charData = [
   { id: 'c28', hindi: 'ल', kannada: 'ಲ', trans: 'la', type: 'consonant', subgroup: 'Misc (अन्य)' },
   { id: 'c29', hindi: 'व', kannada: 'ವ', trans: 'va', type: 'consonant', subgroup: 'Misc (अन्य)' },
   { id: 'c30', hindi: 'श', kannada: 'ಶ', trans: 'sha', type: 'consonant', subgroup: 'Misc (अन्य)' },
-  { id: 'c31', hindi: 'ಷ', kannada: 'ಷ', trans: 'sha', type: 'consonant', subgroup: 'Misc (अन्य)' },
-  { id: 'c32', hindi: 'ಸ', kannada: 'ಸ', trans: 'sa', type: 'consonant', subgroup: 'Misc (अन्य)' },
-  { id: 'c33', hindi: 'ಹ', kannada: 'ಹ', trans: 'ha', type: 'consonant', subgroup: 'Misc (अन्य)' },
-  { id: 'c34', hindi: 'ಳ', kannada: 'ಳ', trans: 'la', type: 'consonant', subgroup: 'Misc (अन्य)' },
+  { id: 'c31', hindi: 'ष', kannada: 'ಷ', trans: 'sha', type: 'consonant', subgroup: 'Misc (अन्य)' },
+  { id: 'c32', hindi: 'स', kannada: 'ಸ', trans: 'sa', type: 'consonant', subgroup: 'Misc (अन्य)' },
+  { id: 'c33', hindi: 'ह', kannada: 'ಹ', trans: 'ha', type: 'consonant', subgroup: 'Misc (अन्य)' },
+  { id: 'c34', hindi: 'ळ', kannada: 'ಳ', trans: 'la', type: 'consonant', subgroup: 'Misc (अन्य)' },
 ];
 
 // --- COMPONENTS ---
@@ -271,15 +271,19 @@ const WritingPad = forwardRef(({ character, onClear, theme }, ref) => {
 
 const CharacterCard = ({ data, onClick, isCompleted, theme }) => (
   <button onClick={() => onClick(data)} className={`flex flex-col items-center justify-center p-3 sm:p-4 rounded-xl shadow-sm border-2 transition-all group relative ${isCompleted ? (theme === 'dark' ? 'bg-green-900/20 border-green-800' : 'bg-green-50 border-green-200') : (theme === 'dark' ? 'bg-slate-800 border-slate-700 hover:border-indigo-500' : 'bg-white border-slate-100 hover:border-indigo-300')}`}>
-    <div className="flex flex-col items-center relative">
-      <span className={`text-[10px] sm:text-xs font-medium ${theme === 'dark' ? 'text-slate-500' : 'text-slate-400'} whitespace-nowrap`}>{data.hindi}</span>
-      <span className={`text-2xl sm:text-3xl font-bold group-hover:text-indigo-400 ${isCompleted ? 'text-green-500' : (theme === 'dark' ? 'text-slate-200' : 'text-slate-800')}`}>{data.kannada}</span>
-      <span className={`text-[9px] sm:text-[10px] font-mono font-bold mt-0.5 ${theme === 'dark' ? 'text-slate-600' : 'text-slate-400'}`}>/{data.trans}/</span>
-      {data.vowelType && (
-        <span className={`absolute -top-1 -right-3 text-[8px] font-black uppercase rounded ${data.vowelType === 'Short' ? 'text-indigo-400' : 'text-amber-500'}`}>
-            {data.vowelType === 'Short' ? '1●' : '2●'}
-        </span>
-      )}
+    <div className="flex flex-col items-center w-full">
+      <div className="flex items-baseline justify-center gap-2 mb-1 w-full">
+        <span className={`text-base sm:text-lg font-medium ${theme === 'dark' ? 'text-slate-500' : 'text-slate-400'}`}>{data.hindi}</span>
+        <span className={`text-2xl sm:text-3xl font-bold group-hover:text-indigo-400 ${isCompleted ? 'text-green-500' : (theme === 'dark' ? 'text-slate-200' : 'text-slate-800')}`}>{data.kannada}</span>
+      </div>
+      <div className="flex items-center justify-center gap-1 relative">
+         <span className={`text-[10px] sm:text-xs font-mono font-bold ${theme === 'dark' ? 'text-slate-600' : 'text-slate-400'}`}>/{data.trans}/</span>
+         {data.vowelType && (
+            <span className={`text-[8px] font-black uppercase ${data.vowelType === 'Short' ? 'text-indigo-400' : 'text-amber-500'}`}>
+                {data.vowelType === 'Short' ? '1●' : '2●'}
+            </span>
+          )}
+      </div>
     </div>
     {isCompleted && <div className="absolute top-1 right-1"><CheckCircle2 size={12} className="text-green-500 fill-green-100" /></div>}
   </button>
@@ -310,12 +314,10 @@ export default function App() {
   const resultRef = useRef(null);
 
   useEffect(() => {
-    // Safely check if __firebase_config is available
     if (typeof __firebase_config === 'undefined' || !__firebase_config) {
       console.error("Firebase configuration is missing.");
       return;
     }
-
     try {
       const config = JSON.parse(__firebase_config);
       const app = initializeApp(config);
@@ -406,11 +408,9 @@ export default function App() {
         setPuzzleState(p => ({ ...p, isComplete: true }));
         return;
     }
-
     const t = currentQueue[0];
     const newQueue = currentQueue.slice(1);
     setPuzzleQueue(newQueue);
-
     let opts = [t];
     while(opts.length < 4) {
       const r = charData[Math.floor(Math.random() * charData.length)];
@@ -575,7 +575,7 @@ export default function App() {
                      <div className="text-center p-2 space-y-4 sm:space-y-6">
                         <p className="text-2xl sm:text-3xl font-serif text-indigo-500 font-black leading-tight">{aiData.usage.sentence}</p>
                         <div className={`p-4 sm:p-6 rounded-[2rem] border-2 shadow-inner ${theme === 'dark' ? 'bg-slate-900/50 border-slate-700' : 'bg-slate-50 border-indigo-100'}`}>
-                          <p className="text-[9px] sm:text-[10px] font-bold text-indigo-500 uppercase tracking-widest mb-2 sm:mb-3">Phonetic Sounds (Devanagari)</p>
+                          <p className="text-[9px] sm:text-[10px] font-bold text-indigo-500 uppercase tracking-widest mb-2 sm:mb-3">Sounds (Devanagari)</p>
                           <p className={`text-3xl sm:text-4xl font-black leading-relaxed ${theme === 'dark' ? 'text-white' : 'text-slate-950'}`}>{aiData.usage.hindi_script_representation}</p>
                         </div>
                         <div className={`p-4 rounded-2xl border-2 ${theme === 'dark' ? 'bg-indigo-900/20 border-indigo-800' : 'bg-cyan-50 border-cyan-100'}`}>
@@ -613,7 +613,7 @@ export default function App() {
         )}
 
         {view === 'puzzle' && (
-          <div className="max-w-md mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 pb-20 flex flex-col items-center">
+          <div className="max-w-md mx-auto space-y-4 sm:space-y-8 animate-in fade-in duration-300 pb-20 pt-2 flex flex-col items-center">
             
             {/* SUBTLE PROGRESS BAR AT TOP */}
             <div className="w-full px-2 pt-2">
@@ -691,7 +691,7 @@ export default function App() {
                         key={o.id} 
                         disabled={puzzleState.isSolved || isWrong} 
                         onClick={() => handlePuzzleGuess(o)} 
-                        className={`h-24 sm:h-52 rounded-2xl sm:rounded-[2rem] border-2 flex flex-col items-center justify-center transition-all ${isCorrect ? 'bg-green-500 border-green-400 text-white shadow-xl scale-105 z-10' : isWrong ? 'bg-red-500/10 border-red-500/20 opacity-40 scale-95 cursor-not-allowed' : (theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-200 hover:border-indigo-500 shadow-lg' : 'bg-white border-slate-200 text-slate-800 hover:border-indigo-400 shadow-sm')}`}
+                        className={`h-24 sm:h-52 rounded-2xl sm:rounded-[2rem] border-2 flex flex-col items-center justify-center transition-all ${isCorrect ? 'bg-green-500 border-green-400 text-white shadow-xl scale-105 z-10' : isWrong ? 'bg-red-50/10 border-red-500/20 opacity-40 scale-95 cursor-not-allowed' : (theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-200 hover:border-indigo-500 shadow-lg' : 'bg-white border-slate-200 text-slate-800 hover:border-indigo-400 shadow-sm')}`}
                       >
                         <span className={`${isCorrect || isWrong ? 'text-2xl sm:text-5xl' : 'text-5xl sm:text-7xl'} font-bold mb-1 transition-all`}>{o.kannada}</span>
                         {(isCorrect || isWrong) && (
