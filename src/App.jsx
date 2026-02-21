@@ -11,6 +11,7 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, getDoc } from 'firebase/firestore';
 
+
 // --- GEMINI API UTILS ---
 // Read API key from Vite env or window/global
 const apiKey = typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_GEMINI_API_KEY
@@ -335,29 +336,42 @@ export default function App() {
   const nextCharData = currentIndex < currentList.length - 1 ? currentList[currentIndex + 1] : null;
 
   useEffect(() => {
-    if (typeof __firebase_config === 'undefined' || !__firebase_config) return;
-    try {
-      const config = JSON.parse(__firebase_config);
-      const app = initializeApp(config);
-      const auth = getAuth(app);
-      const init = async () => { 
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token); 
-        else await signInAnonymously(auth); 
-      };
-      init(); onAuthStateChanged(auth, setUser);
-    } catch (err) { console.error("Firebase init failed:", err); }
-  }, []);
+    let firebaseConfigJson;
+    console.log("firebaseConfig_env", typeof __firebase_config !== 'undefined');
+    if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+      firebaseConfigJson = __firebase_config;
+    } else {
+      firebaseConfigJson = import.meta.env.VITE_FIREBASE_CONFIG
+      console.log("firebaseConfig", firebaseConfigJson);
+    }
 
-  useEffect(() => {
-    if (!user) return;
-    const db = getFirestore();
-    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-    const unsubProgress = onSnapshot(collection(db, 'artifacts', appId, 'users', user.uid, 'progress'), (snap) => {
-      const p = {}; snap.forEach(d => p[d.id] = true); setCompletedChars(p);
-    });
-    const streakRef = doc(db, 'artifacts', appId, 'users', user.uid, 'profile', 'stats');
-    getDoc(streakRef).then(d => { if(d.exists()) setStreak(d.data().streak || 0); });
-    return () => unsubProgress();
+    if (firebaseConfigJson) {
+        try {
+            const app = initializeApp(JSON.parse(firebaseConfigJson));
+            const auth = getAuth(app);
+            const db = getFirestore(app);
+            
+            const initAuth = async () => { 
+              if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token); 
+              else await signInAnonymously(auth); 
+            };
+            initAuth(); 
+            
+            onAuthStateChanged(auth, setUser);
+
+            if (user) {
+              const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+              onSnapshot(collection(db, 'artifacts', appId, 'users', user.uid, 'progress'), (snap) => {
+                const p = {}; snap.forEach(d => p[d.id] = true); setCompletedChars(p);
+              });
+              const streakRef = doc(db, 'artifacts', appId, 'users', user.uid, 'profile', 'stats');
+              getDoc(streakRef).then(d => { if(d.exists()) setStreak(d.data().streak || 0); });
+            }
+        } catch (err) { 
+            console.error("Firebase init failed:", err); 
+            setError("Firebase initialization failed.");
+        }
+    }
   }, [user]);
 
   useEffect(() => {
@@ -394,8 +408,17 @@ export default function App() {
 
   const run = async (feat, fn) => {
     setError(null); setActiveFeature(feat); setIsAiLoading(true);
-    try { const res = await fn(selectedChar); setAiData(p => ({ ...p, [feat]: res })); }
-    catch { setError("AI error."); setActiveFeature(null); } finally { setIsAiLoading(false); }
+    try { 
+        const res = await fn(selectedChar); 
+        setAiData(p => ({ ...p, [feat]: res })); 
+    }
+    catch (e) { 
+        console.error("AI call failed", e);
+        setError(e.toString()); 
+        setActiveFeature(null); 
+    } finally { 
+        setIsAiLoading(false); 
+    }
   };
 
   const toggleMastered = async () => {
