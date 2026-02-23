@@ -12,9 +12,32 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, getDoc } from 'firebase/firestore';
 
-// --- GEMINI API UTILS ---
-// Mandatory: Always use empty string for apiKey in this environment
+// --- GEMINI API UTILS & PROXY LOGIC ---
 const apiKey = ""; 
+const proxyUrl = typeof __firebase_ai_proxy !== 'undefined' ? __firebase_ai_proxy : '';
+
+/**
+ * Helper to construct the API URL. 
+ * If apiKey is present, it uses the direct Google AI endpoint.
+ * If apiKey is empty, it uses the provided Firebase proxy URL.
+ * If both are missing, it defaults to the standard AI endpoint to prevent parsing errors.
+ */
+const getGeminiUrl = (endpointPath) => {
+  const cleanPath = endpointPath.startsWith('/') ? endpointPath.slice(1) : endpointPath;
+  
+  if (apiKey) {
+    return `https://generativelanguage.googleapis.com/v1beta/${cleanPath}?key=${apiKey}`;
+  }
+  
+  if (proxyUrl) {
+    // Ensure proxyUrl doesn't end with a slash for consistent joining
+    const base = proxyUrl.endsWith('/') ? proxyUrl.slice(0, -1) : proxyUrl;
+    return `${base}/v1beta/${cleanPath}`;
+  }
+
+  // Default fallback to prevent fetch(undefined) or fetch(/path) errors
+  return `https://generativelanguage.googleapis.com/v1beta/${cleanPath}?key=${apiKey}`;
+};
 
 const base64ToArrayBuffer = (base64) => {
   const binaryString = window.atob(base64);
@@ -65,8 +88,8 @@ const fetchWithRetry = async (url, options, retries = 5, backoff = 1000) => {
 };
 
 // --- GLOBAL FIREBASE INIT ---
-// Use environment provided variables directly
-const firebaseConfig = JSON.parse(__firebase_config);
+const firebaseConfigRaw = typeof __firebase_config !== 'undefined' ? __firebase_config : '{}';
+const firebaseConfig = JSON.parse(firebaseConfigRaw);
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -81,7 +104,7 @@ const callGeminiAudio = async (kannadaChar, retryCount = 0) => {
     }
   };
   try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`, {
+    const response = await fetch(getGeminiUrl('models/gemini-2.5-flash-preview-tts:generateContent'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -102,7 +125,7 @@ const callGeminiAudio = async (kannadaChar, retryCount = 0) => {
 const callGeminiUsage = async (charData) => {
   const prompt = `Simple Kannada sentence using '${charData.kannada}'. Output JSON: { "sentence": "string (Kannada Script)", "hindi_script_representation": "string (Phonetic sound in Hindi script)", "hindi_translation": "string (Actual meaning in Hindi)" }`;
   const data = await fetchWithRetry(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
+    getGeminiUrl('models/gemini-2.5-flash-preview-09-2025:generateContent'),
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -115,7 +138,7 @@ const callGeminiUsage = async (charData) => {
 const callGeminiTutor = async (charData) => {
   const prompt = `2 words for kids starting with Kannada character '${charData.kannada}'. Output JSON format: { "mnemonic": "string (Hindi)", "words": [{ "kannada": "string", "hindi_sound": "string (PHONETIC sound only in Hindi script)", "hindi_meaning": "string (Actual translation in Hindi)" }] }`;
   const data = await fetchWithRetry(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
+    getGeminiUrl('models/gemini-2.5-flash-preview-09-2025:generateContent'),
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -129,7 +152,7 @@ const callGeminiVision = async (base64Image, charData) => {
   if (!base64Image) throw new Error("No image data");
   const prompt = `Handwriting analysis. I have written the Kannada character '${charData.kannada}'. Rate my attempt 1-5. Provide a tip in simple Hindi. Output JSON format: { "rating": number, "feedback": "string" }`;
   const data = await fetchWithRetry(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
+    getGeminiUrl('models/gemini-2.5-flash-preview-09-2025:generateContent'),
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -142,7 +165,7 @@ const callGeminiVision = async (base64Image, charData) => {
   return JSON.parse(data.candidates[0].content.parts[0].text);
 };
 
-// --- DATASET (AUDITED: NO KANNADA IN HINDI ATTRS) ---
+// --- DATASET (FULLY AUDITED FOR SCRIPT ACCURACY) ---
 const charData = [
   { id: 'v1', hindi: 'अ', kannada: 'ಅ', trans: 'a', type: 'vowel', subgroup: 'Vowels', isFrequent: true },
   { id: 'v2', hindi: 'आ', kannada: 'ಆ', trans: 'aa', type: 'vowel', subgroup: 'Vowels', isFrequent: true },
@@ -174,16 +197,16 @@ const charData = [
   { id: 'c13', hindi: 'ड', kannada: 'ಡ', trans: 'da', type: 'consonant', subgroup: 'Ta-Varga (ट-वर्ग)', isFrequent: true },
   { id: 'c14', hindi: 'ढ', kannada: 'ಢ', trans: 'dha', type: 'consonant', subgroup: 'Ta-Varga (ट-वर्ग)' },
   { id: 'c15', hindi: 'ण', kannada: 'ಣ', trans: 'na', type: 'consonant', subgroup: 'Ta-Varga (ट-वर्ग)' },
-  { id: 'c16', hindi: 'त', kannada: 'ತ', trans: 'ta', type: 'consonant', subgroup: 'Ta-Varga (ತ-ವರ್ಗ)', isFrequent: true },
-  { id: 'c17', hindi: 'थ', kannada: 'ಥ', trans: 'tha', type: 'consonant', subgroup: 'Ta-Varga (ತ-ವರ್ಗ)' },
-  { id: 'c18', hindi: 'द', kannada: 'ದ', trans: 'da', type: 'consonant', subgroup: 'Ta-Varga (ತ-ವರ್ಗ)', isFrequent: true },
-  { id: 'c19', hindi: 'ध', kannada: 'ಧ', trans: 'dha', type: 'consonant', subgroup: 'Ta-Varga (ತ-ವರ್ಗ)' },
-  { id: 'c20', hindi: 'न', kannada: 'ನ', trans: 'na', type: 'consonant', subgroup: 'Ta-Varga (ತ-ವರ್ಗ)', isFrequent: true },
-  { id: 'c21', hindi: 'प', kannada: 'ಪ', trans: 'pa', type: 'consonant', subgroup: 'Pa-Varga (ಪ-ವರ್ಗ)', isFrequent: true },
-  { id: 'c22', hindi: 'फ', kannada: 'ಫ', trans: 'pha', type: 'consonant', subgroup: 'Pa-Varga (ಪ-ವರ್ಗ)' },
-  { id: 'c23', hindi: 'ब', kannada: 'ಬ', trans: 'ba', type: 'consonant', subgroup: 'Pa-Varga (ಪ-ವರ್ಗ)', isFrequent: true },
-  { id: 'c24', hindi: 'भ', kannada: 'ಭ', trans: 'bha', type: 'consonant', subgroup: 'Pa-Varga (ಪ-ವರ್ಗ)' },
-  { id: 'c25', hindi: 'म', kannada: 'ಮ', trans: 'ma', type: 'consonant', subgroup: 'Pa-Varga (ಪ-ವರ್ಗ)', isFrequent: true },
+  { id: 'c16', hindi: 'त', kannada: 'ತ', trans: 'ta', type: 'consonant', subgroup: 'Ta-Varga (त-वर्ग)', isFrequent: true },
+  { id: 'c17', hindi: 'थ', kannada: 'ಥ', trans: 'tha', type: 'consonant', subgroup: 'Ta-Varga (त-वर्ग)' },
+  { id: 'c18', hindi: 'द', kannada: 'ದ', trans: 'da', type: 'consonant', subgroup: 'Ta-Varga (त-वर्ग)', isFrequent: true },
+  { id: 'c19', hindi: 'ध', kannada: 'ಧ', trans: 'dha', type: 'consonant', subgroup: 'Ta-Varga (त-वर्ग)' },
+  { id: 'c20', hindi: 'न', kannada: 'ನ', trans: 'na', type: 'consonant', subgroup: 'Ta-Varga (त-वर्ग)', isFrequent: true },
+  { id: 'c21', hindi: 'प', kannada: 'ಪ', trans: 'pa', type: 'consonant', subgroup: 'Pa-Varga (प-वर्ग)', isFrequent: true },
+  { id: 'c22', hindi: 'फ', kannada: 'ಫ', trans: 'pha', type: 'consonant', subgroup: 'Pa-Varga (प-वर्ग)' },
+  { id: 'c23', hindi: 'ब', kannada: 'ಬ', trans: 'ba', type: 'consonant', subgroup: 'Pa-Varga (प-वर्ग)', isFrequent: true },
+  { id: 'c24', hindi: 'भ', kannada: 'ಭ', trans: 'bha', type: 'consonant', subgroup: 'Pa-Varga (प-वर्ग)' },
+  { id: 'c25', hindi: 'म', kannada: 'ಮ', trans: 'ma', type: 'consonant', subgroup: 'Pa-Varga (प-वर्ग)', isFrequent: true },
   { id: 'c26', hindi: 'य', kannada: 'ಯ', trans: 'ya', type: 'consonant', subgroup: 'Misc (अन्य)', isFrequent: true },
   { id: 'c27', hindi: 'र', kannada: 'ರ', trans: 'ra', type: 'consonant', subgroup: 'Misc (अन्य)', isFrequent: true },
   { id: 'c28', hindi: 'ल', kannada: 'ಲ', trans: 'la', type: 'consonant', subgroup: 'Misc (अन्य)', isFrequent: true },
@@ -327,7 +350,7 @@ export default function App() {
   const padRef = useRef(null);
   const resultRef = useRef(null);
 
-  // Derived dataset pool
+  // Filter and Derived Logic
   const currentFullList = category ? charData.filter(c => c.type === category) : charData;
   const currentList = currentFullList.filter(c => !showFrequentOnly || c.isFrequent);
 
@@ -338,10 +361,14 @@ export default function App() {
   // Firebase Initialization & Auth
   useEffect(() => {
     const initAuth = async () => {
-      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-        await signInWithCustomToken(auth, __initial_auth_token);
-      } else {
-        await signInAnonymously(auth);
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (e) {
+        console.error("Auth failed:", e);
       }
     };
     initAuth();
