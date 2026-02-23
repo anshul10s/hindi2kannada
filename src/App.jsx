@@ -18,9 +18,6 @@ const proxyUrl = typeof __firebase_ai_proxy !== 'undefined' ? __firebase_ai_prox
 
 /**
  * Helper to construct the API URL. 
- * If apiKey is present, it uses the direct Google AI endpoint.
- * If apiKey is empty, it uses the provided Firebase proxy URL.
- * If both are missing, it defaults to the standard AI endpoint to prevent parsing errors.
  */
 const getGeminiUrl = (endpointPath) => {
   const cleanPath = endpointPath.startsWith('/') ? endpointPath.slice(1) : endpointPath;
@@ -30,12 +27,10 @@ const getGeminiUrl = (endpointPath) => {
   }
   
   if (proxyUrl) {
-    // Ensure proxyUrl doesn't end with a slash for consistent joining
     const base = proxyUrl.endsWith('/') ? proxyUrl.slice(0, -1) : proxyUrl;
     return `${base}/v1beta/${cleanPath}`;
   }
 
-  // Default fallback to prevent fetch(undefined) or fetch(/path) errors
   return `https://generativelanguage.googleapis.com/v1beta/${cleanPath}?key=${apiKey}`;
 };
 
@@ -75,7 +70,7 @@ const triggerHaptic = (pattern) => {
   }
 };
 
-const fetchWithRetry = async (url, options, retries = 5, backoff = 1000) => {
+const fetchWithRetry = async (url, options, retries =2, backoff = 1000) => {
   try {
     const response = await fetch(url, options);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -87,13 +82,21 @@ const fetchWithRetry = async (url, options, retries = 5, backoff = 1000) => {
   }
 };
 
-// --- GLOBAL FIREBASE INIT ---
+// --- GLOBAL FIREBASE INIT (SAFE WRAPPER) ---
 const firebaseConfigRaw = typeof __firebase_config !== 'undefined' ? __firebase_config : '{}';
 const firebaseConfig = JSON.parse(firebaseConfigRaw);
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+let app, auth, db;
+if (firebaseConfig && firebaseConfig.apiKey) {
+  try {
+    app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getFirestore(app);
+  } catch (e) {
+    console.error("Firebase failed to initialize:", e);
+  }
+}
 
 const callGeminiAudio = async (kannadaChar, retryCount = 0) => {
   const payload = {
@@ -165,7 +168,7 @@ const callGeminiVision = async (base64Image, charData) => {
   return JSON.parse(data.candidates[0].content.parts[0].text);
 };
 
-// --- DATASET (FULLY AUDITED FOR SCRIPT ACCURACY) ---
+// --- DATASET (AUDITED: NO KANNADA IN HINDI ATTRS) ---
 const charData = [
   { id: 'v1', hindi: 'अ', kannada: 'ಅ', trans: 'a', type: 'vowel', subgroup: 'Vowels', isFrequent: true },
   { id: 'v2', hindi: 'आ', kannada: 'ಆ', trans: 'aa', type: 'vowel', subgroup: 'Vowels', isFrequent: true },
@@ -197,16 +200,16 @@ const charData = [
   { id: 'c13', hindi: 'ड', kannada: 'ಡ', trans: 'da', type: 'consonant', subgroup: 'Ta-Varga (ट-वर्ग)', isFrequent: true },
   { id: 'c14', hindi: 'ढ', kannada: 'ಢ', trans: 'dha', type: 'consonant', subgroup: 'Ta-Varga (ट-वर्ग)' },
   { id: 'c15', hindi: 'ण', kannada: 'ಣ', trans: 'na', type: 'consonant', subgroup: 'Ta-Varga (ट-वर्ग)' },
-  { id: 'c16', hindi: 'त', kannada: 'ತ', trans: 'ta', type: 'consonant', subgroup: 'Ta-Varga (त-वर्ग)', isFrequent: true },
-  { id: 'c17', hindi: 'थ', kannada: 'ಥ', trans: 'tha', type: 'consonant', subgroup: 'Ta-Varga (त-वर्ग)' },
-  { id: 'c18', hindi: 'द', kannada: 'ದ', trans: 'da', type: 'consonant', subgroup: 'Ta-Varga (त-वर्ग)', isFrequent: true },
-  { id: 'c19', hindi: 'ध', kannada: 'ಧ', trans: 'dha', type: 'consonant', subgroup: 'Ta-Varga (त-वर्ग)' },
-  { id: 'c20', hindi: 'न', kannada: 'ನ', trans: 'na', type: 'consonant', subgroup: 'Ta-Varga (त-वर्ग)', isFrequent: true },
-  { id: 'c21', hindi: 'प', kannada: 'ಪ', trans: 'pa', type: 'consonant', subgroup: 'Pa-Varga (प-वर्ग)', isFrequent: true },
-  { id: 'c22', hindi: 'फ', kannada: 'ಫ', trans: 'pha', type: 'consonant', subgroup: 'Pa-Varga (प-वर्ग)' },
-  { id: 'c23', hindi: 'ब', kannada: 'ಬ', trans: 'ba', type: 'consonant', subgroup: 'Pa-Varga (प-वर्ग)', isFrequent: true },
-  { id: 'c24', hindi: 'भ', kannada: 'ಭ', trans: 'bha', type: 'consonant', subgroup: 'Pa-Varga (प-वर्ग)' },
-  { id: 'c25', hindi: 'म', kannada: 'ಮ', trans: 'ma', type: 'consonant', subgroup: 'Pa-Varga (प-वर्ग)', isFrequent: true },
+  { id: 'c16', hindi: 'त', kannada: 'ತ', trans: 'ta', type: 'consonant', subgroup: 'Ta-Varga (ತ-ವರ್ಗ)', isFrequent: true },
+  { id: 'c17', hindi: 'थ', kannada: 'ಥ', trans: 'tha', type: 'consonant', subgroup: 'Ta-Varga (ತ-ವರ್ಗ)' },
+  { id: 'c18', hindi: 'द', kannada: 'ದ', trans: 'da', type: 'consonant', subgroup: 'Ta-Varga (ತ-ವರ್ಗ)', isFrequent: true },
+  { id: 'c19', hindi: 'ध', kannada: 'ಧ', trans: 'dha', type: 'consonant', subgroup: 'Ta-Varga (ತ-ವರ್ಗ)' },
+  { id: 'c20', hindi: 'न', kannada: 'ನ', trans: 'na', type: 'consonant', subgroup: 'Ta-Varga (ತ-ವರ್ಗ)', isFrequent: true },
+  { id: 'c21', hindi: 'प', kannada: 'ಪ', trans: 'pa', type: 'consonant', subgroup: 'Pa-Varga (ಪ-ವರ್ಗ)', isFrequent: true },
+  { id: 'c22', hindi: 'फ', kannada: 'ಫ', trans: 'pha', type: 'consonant', subgroup: 'Pa-Varga (ಪ-ವರ್ಗ)' },
+  { id: 'c23', hindi: 'ब', kannada: 'ಬ', trans: 'ba', type: 'consonant', subgroup: 'Pa-Varga (ಪ-ವರ್ಗ)', isFrequent: true },
+  { id: 'c24', hindi: 'भ', kannada: 'ಭ', trans: 'bha', type: 'consonant', subgroup: 'Pa-Varga (ಪ-ವರ್ಗ)' },
+  { id: 'c25', hindi: 'म', kannada: 'ಮ', trans: 'ma', type: 'consonant', subgroup: 'Pa-Varga (ಪ-ವರ್ಗ)', isFrequent: true },
   { id: 'c26', hindi: 'य', kannada: 'ಯ', trans: 'ya', type: 'consonant', subgroup: 'Misc (अन्य)', isFrequent: true },
   { id: 'c27', hindi: 'र', kannada: 'ರ', trans: 'ra', type: 'consonant', subgroup: 'Misc (अन्य)', isFrequent: true },
   { id: 'c28', hindi: 'ल', kannada: 'ಲ', trans: 'la', type: 'consonant', subgroup: 'Misc (अन्य)', isFrequent: true },
@@ -350,7 +353,7 @@ export default function App() {
   const padRef = useRef(null);
   const resultRef = useRef(null);
 
-  // Filter and Derived Logic
+  // Derived dataset pool
   const currentFullList = category ? charData.filter(c => c.type === category) : charData;
   const currentList = currentFullList.filter(c => !showFrequentOnly || c.isFrequent);
 
@@ -361,6 +364,7 @@ export default function App() {
   // Firebase Initialization & Auth
   useEffect(() => {
     const initAuth = async () => {
+      if (!auth) return;
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
           await signInWithCustomToken(auth, __initial_auth_token);
@@ -372,13 +376,13 @@ export default function App() {
       }
     };
     initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
+    const unsubscribe = auth ? onAuthStateChanged(auth, setUser) : () => {};
     return () => unsubscribe();
   }, []);
 
   // Data Fetching
   useEffect(() => {
-    if (!user) return;
+    if (!user || !db) return;
     const unsubProgress = onSnapshot(collection(db, 'artifacts', appId, 'users', user.uid, 'progress'), (snap) => {
       const p = {}; snap.forEach(d => p[d.id] = true); setCompletedChars(p);
     }, (err) => console.error(err));
@@ -433,7 +437,7 @@ export default function App() {
   };
 
   const toggleMastered = async () => {
-    if (!user || !selectedChar) return;
+    if (!user || !selectedChar || !db) return;
     const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'progress', selectedChar.id);
     if (completedChars[selectedChar.id]) await deleteDoc(docRef);
     else await setDoc(docRef, { learned: true, updatedAt: new Date().toISOString() });
