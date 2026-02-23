@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef } from 'react';
-import { 
-  BookOpen, PenTool, ChevronLeft, ChevronRight, RefreshCw, Eraser, 
-  Home, Info, MousePointer2, Sparkles, Loader2, Star, Check, 
+import {
+  BookOpen, PenTool, ChevronLeft, ChevronRight, RefreshCw, Eraser,
+  Home, Info, MousePointer2, Sparkles, Loader2, Star, Check,
   AlertCircle, Split, Trophy, CheckCircle2, Brain, Quote, Hash,
   Gamepad2, ArrowRight, Volume2, BookHeart, Moon, Sun, Flame, Target, Zap, Clock,
-  ArrowLeftRight
+  ArrowLeftRight, CheckSquare, XCircle
 } from 'lucide-react';
 
 // --- FIREBASE IMPORTS ---
@@ -13,9 +13,8 @@ import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged }
 import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, getDoc } from 'firebase/firestore';
 
 // --- GEMINI API UTILS ---
-// Read API key from Vite env or window/global
-const apiKey = typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_GEMINI_API_KEY
-  || '';
+// Mandatory: Always use empty string for apiKey in this environment
+const apiKey = ""; 
 
 const base64ToArrayBuffer = (base64) => {
   const binaryString = window.atob(base64);
@@ -35,12 +34,12 @@ const pcmToWav = (pcmData, sampleRate) => {
   writeString(8, 'WAVE');
   writeString(12, 'fmt ');
   view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true); 
-  view.setUint16(22, 1, true); 
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
   view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true); 
-  view.setUint16(32, 2, true); 
-  view.setUint16(34, 16, true); 
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
   writeString(36, 'data');
   view.setUint32(40, pcmData.length * 2, true);
   for (let i = 0; i < pcmData.length; i++) { view.setInt16(44 + i * 2, pcmData[i], true); }
@@ -52,6 +51,26 @@ const triggerHaptic = (pattern) => {
     window.navigator.vibrate(pattern);
   }
 };
+
+const fetchWithRetry = async (url, options, retries = 5, backoff = 1000) => {
+  try {
+    const response = await fetch(url, options);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return await response.json();
+  } catch (error) {
+    if (retries <= 0) throw error;
+    await new Promise(resolve => setTimeout(resolve, backoff));
+    return fetchWithRetry(url, options, retries - 1, backoff * 2);
+  }
+};
+
+// --- GLOBAL FIREBASE INIT ---
+// Use environment provided variables directly
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
 const callGeminiAudio = async (kannadaChar, retryCount = 0) => {
   const payload = {
@@ -80,7 +99,50 @@ const callGeminiAudio = async (kannadaChar, retryCount = 0) => {
   }
 };
 
-// --- DATASET (AUDITED FOR SCRIPT ACCURACY) ---
+const callGeminiUsage = async (charData) => {
+  const prompt = `Simple Kannada sentence using '${charData.kannada}'. Output JSON: { "sentence": "string (Kannada Script)", "hindi_script_representation": "string (Phonetic sound in Hindi script)", "hindi_translation": "string (Actual meaning in Hindi)" }`;
+  const data = await fetchWithRetry(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json" } })
+    }
+  );
+  return JSON.parse(data.candidates[0].content.parts[0].text);
+};
+
+const callGeminiTutor = async (charData) => {
+  const prompt = `2 words for kids starting with Kannada character '${charData.kannada}'. Output JSON format: { "mnemonic": "string (Hindi)", "words": [{ "kannada": "string", "hindi_sound": "string (PHONETIC sound only in Hindi script)", "hindi_meaning": "string (Actual translation in Hindi)" }] }`;
+  const data = await fetchWithRetry(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json" } })
+    }
+  );
+  return JSON.parse(data.candidates[0].content.parts[0].text);
+};
+
+const callGeminiVision = async (base64Image, charData) => {
+  if (!base64Image) throw new Error("No image data");
+  const prompt = `Handwriting analysis. I have written the Kannada character '${charData.kannada}'. Rate my attempt 1-5. Provide a tip in simple Hindi. Output JSON format: { "rating": number, "feedback": "string" }`;
+  const data = await fetchWithRetry(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: prompt }, { inlineData: { mimeType: "image/png", data: base64Image } }] }],
+        generationConfig: { responseMimeType: "application/json" }
+      })
+    }
+  );
+  return JSON.parse(data.candidates[0].content.parts[0].text);
+};
+
+// --- DATASET (AUDITED: NO KANNADA IN HINDI ATTRS) ---
 const charData = [
   { id: 'v1', hindi: 'अ', kannada: 'ಅ', trans: 'a', type: 'vowel', subgroup: 'Vowels', isFrequent: true },
   { id: 'v2', hindi: 'आ', kannada: 'ಆ', trans: 'aa', type: 'vowel', subgroup: 'Vowels', isFrequent: true },
@@ -112,16 +174,16 @@ const charData = [
   { id: 'c13', hindi: 'ड', kannada: 'ಡ', trans: 'da', type: 'consonant', subgroup: 'Ta-Varga (ट-वर्ग)', isFrequent: true },
   { id: 'c14', hindi: 'ढ', kannada: 'ಢ', trans: 'dha', type: 'consonant', subgroup: 'Ta-Varga (ट-वर्ग)' },
   { id: 'c15', hindi: 'ण', kannada: 'ಣ', trans: 'na', type: 'consonant', subgroup: 'Ta-Varga (ट-वर्ग)' },
-  { id: 'c16', hindi: 'त', kannada: 'ತ', trans: 'ta', type: 'consonant', subgroup: 'Ta-Varga (त-वर्ग)', isFrequent: true },
-  { id: 'c17', hindi: 'थ', kannada: 'ಥ', trans: 'tha', type: 'consonant', subgroup: 'Ta-Varga (त-वर्ग)' },
-  { id: 'c18', hindi: 'द', kannada: 'ದ', trans: 'da', type: 'consonant', subgroup: 'Ta-Varga (त-वर्ग)', isFrequent: true },
-  { id: 'c19', hindi: 'ध', kannada: 'ಧ', trans: 'dha', type: 'consonant', subgroup: 'Ta-Varga (त-वर्ग)' },
-  { id: 'c20', hindi: 'न', kannada: 'ನ', trans: 'na', type: 'consonant', subgroup: 'Ta-Varga (त-वर्ग)', isFrequent: true },
-  { id: 'c21', hindi: 'प', kannada: 'ಪ', trans: 'pa', type: 'consonant', subgroup: 'Pa-Varga (प-वर्ग)', isFrequent: true },
-  { id: 'c22', hindi: 'फ', kannada: 'ಫ', trans: 'pha', type: 'consonant', subgroup: 'Pa-Varga (प-वर्ग)' },
-  { id: 'c23', hindi: 'ब', kannada: 'ಬ', trans: 'ba', type: 'consonant', subgroup: 'Pa-Varga (प-वर्ग)', isFrequent: true },
-  { id: 'c24', hindi: 'भ', kannada: 'ಭ', trans: 'bha', type: 'consonant', subgroup: 'Pa-Varga (प-वर्ग)' },
-  { id: 'c25', hindi: 'म', kannada: 'ಮ', trans: 'ma', type: 'consonant', subgroup: 'Pa-Varga (प-वर्ग)', isFrequent: true },
+  { id: 'c16', hindi: 'त', kannada: 'ತ', trans: 'ta', type: 'consonant', subgroup: 'Ta-Varga (ತ-ವರ್ಗ)', isFrequent: true },
+  { id: 'c17', hindi: 'थ', kannada: 'ಥ', trans: 'tha', type: 'consonant', subgroup: 'Ta-Varga (ತ-ವರ್ಗ)' },
+  { id: 'c18', hindi: 'द', kannada: 'ದ', trans: 'da', type: 'consonant', subgroup: 'Ta-Varga (ತ-ವರ್ಗ)', isFrequent: true },
+  { id: 'c19', hindi: 'ध', kannada: 'ಧ', trans: 'dha', type: 'consonant', subgroup: 'Ta-Varga (ತ-ವರ್ಗ)' },
+  { id: 'c20', hindi: 'न', kannada: 'ನ', trans: 'na', type: 'consonant', subgroup: 'Ta-Varga (ತ-ವರ್ಗ)', isFrequent: true },
+  { id: 'c21', hindi: 'प', kannada: 'ಪ', trans: 'pa', type: 'consonant', subgroup: 'Pa-Varga (ಪ-ವರ್ಗ)', isFrequent: true },
+  { id: 'c22', hindi: 'फ', kannada: 'ಫ', trans: 'pha', type: 'consonant', subgroup: 'Pa-Varga (ಪ-ವರ್ಗ)' },
+  { id: 'c23', hindi: 'ब', kannada: 'ಬ', trans: 'ba', type: 'consonant', subgroup: 'Pa-Varga (ಪ-ವರ್ಗ)', isFrequent: true },
+  { id: 'c24', hindi: 'भ', kannada: 'ಭ', trans: 'bha', type: 'consonant', subgroup: 'Pa-Varga (ಪ-ವರ್ಗ)' },
+  { id: 'c25', hindi: 'म', kannada: 'ಮ', trans: 'ma', type: 'consonant', subgroup: 'Pa-Varga (ಪ-ವರ್ಗ)', isFrequent: true },
   { id: 'c26', hindi: 'य', kannada: 'ಯ', trans: 'ya', type: 'consonant', subgroup: 'Misc (अन्य)', isFrequent: true },
   { id: 'c27', hindi: 'र', kannada: 'ರ', trans: 'ra', type: 'consonant', subgroup: 'Misc (अन्य)', isFrequent: true },
   { id: 'c28', hindi: 'ल', kannada: 'ಲ', trans: 'la', type: 'consonant', subgroup: 'Misc (अन्य)', isFrequent: true },
@@ -161,26 +223,22 @@ const WritingPad = forwardRef(({ character, onClear, theme }, ref) => {
       tCtx.fillStyle = '#ffffff'; tCtx.fillRect(0, 0, canvas.width, canvas.height);
       tCtx.drawImage(canvas, 0, 0); return tCtx.canvas.toDataURL('image/png').split(',')[1];
     },
-    clear: () => { 
-      if (canvasRef.current) canvasRef.current.getContext('2d').clearRect(0, 0, 9999, 9999);
-      triggerHaptic(30); 
-    }
+    clear: () => { if (canvasRef.current) canvasRef.current.getContext('2d').clearRect(0, 0, 9999, 9999); triggerHaptic(30); }
   }));
 
   useEffect(() => {
     if (!containerRef.current || !canvasRef.current) return;
     const update = () => {
-        if (!containerRef.current || !canvasRef.current) return;
-        const canvas = canvasRef.current;
-        const dpr = window.devicePixelRatio || 1;
-        const rect = containerRef.current.getBoundingClientRect();
-        if (rect.width === 0 || rect.height === 0) return;
-        canvas.width = rect.width * dpr; canvas.height = rect.height * dpr;
-        const ctx = canvas.getContext('2d');
-        ctx.scale(dpr, dpr);
-        ctx.lineCap = 'round'; ctx.lineJoin = 'round'; 
-        ctx.strokeStyle = theme === 'dark' ? '#818cf8' : '#2563eb';
-        ctx.lineWidth = 18;
+      const canvas = canvasRef.current; if (!canvas) return;
+      const dpr = window.devicePixelRatio || 1;
+      const rect = containerRef.current.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+      canvas.width = rect.width * dpr; canvas.height = rect.height * dpr;
+      const ctx = canvas.getContext('2d');
+      ctx.scale(dpr, dpr);
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.strokeStyle = theme === 'dark' ? '#818cf8' : '#2563eb';
+      ctx.lineWidth = 18;
     };
     const observer = new ResizeObserver(update);
     observer.observe(containerRef.current);
@@ -190,7 +248,7 @@ const WritingPad = forwardRef(({ character, onClear, theme }, ref) => {
 
   const start = (e) => {
     e.preventDefault(); if (!canvasRef.current) return;
-    triggerHaptic(15); 
+    triggerHaptic(15);
     const r = canvasRef.current.getBoundingClientRect();
     const x = (e.type.includes('touch') ? e.touches[0].clientX : e.clientX) - r.left;
     const y = (e.type.includes('touch') ? e.touches[0].clientY : e.clientY) - r.top;
@@ -214,7 +272,7 @@ const WritingPad = forwardRef(({ character, onClear, theme }, ref) => {
           <span className={`font-bold transition-colors ${theme === 'dark' ? 'text-slate-700' : 'text-slate-50'}`} style={{ fontSize: '260px', fontFamily: 'serif' }}>{character}</span>
         </div>
         <canvas ref={canvasRef} onMouseDown={start} onMouseMove={draw} onMouseUp={() => setIsDrawing(false)} onMouseLeave={() => setIsDrawing(false)} onTouchStart={start} onTouchMove={draw} onTouchEnd={() => setIsDrawing(false)} className="absolute inset-0 w-full h-full cursor-crosshair touch-none z-10" />
-        <button onClick={() => { if(canvasRef.current) { canvasRef.current.getContext('2d').clearRect(0,0,9999,9999); triggerHaptic(30); } if(onClear)onClear(); }} className="absolute bottom-4 right-4 z-20 flex items-center gap-2 px-6 py-3 bg-slate-900/80 backdrop-blur text-white rounded-full text-sm font-bold shadow-2xl hover:bg-slate-700 active:scale-95 transition-all"><Eraser size={18} /> Clear</button>
+        <button onClick={() => { if (canvasRef.current) { canvasRef.current.getContext('2d').clearRect(0, 0, 9999, 9999); triggerHaptic(30); } if (onClear) onClear(); }} className="absolute bottom-4 right-4 z-20 flex items-center gap-2 px-6 py-3 bg-slate-900/80 backdrop-blur text-white rounded-full text-sm font-bold shadow-2xl hover:bg-slate-700 active:scale-95 transition-all"><Eraser size={18} /> Clear</button>
       </div>
     </div>
   );
@@ -230,11 +288,11 @@ const CharacterCard = ({ data, onClick, isCompleted, theme }) => (
           <span className={`text-4xl sm:text-5xl font-black group-hover:text-indigo-400 ${isCompleted ? 'text-green-700' : (theme === 'dark' ? 'text-slate-200' : 'text-slate-800')}`}>{data.kannada}</span>
           {data.vowelType && (
             <span className={`absolute -top-2 -right-4 text-[9px] font-black uppercase text-indigo-500 tracking-tighter`}>
-                {data.vowelType === 'Short' ? '1●' : '2●'}
+              {data.vowelType === 'Short' ? '1●' : '2●'}
             </span>
           )}
           {data.isDravidianUnique && !data.vowelType && (
-             <span className="absolute -top-2 -right-4 text-[8px] font-black uppercase text-rose-500 bg-rose-50 dark:bg-rose-950/30 px-1 rounded">Unique</span>
+            <span className="absolute -top-2 -right-4 text-[8px] font-black uppercase text-rose-500 bg-rose-50 dark:bg-rose-950/30 px-1 rounded">Unique</span>
           )}
         </div>
       </div>
@@ -256,20 +314,20 @@ export default function App() {
   const [completedChars, setCompletedChars] = useState({});
   const [audioCache, setAudioCache] = useState({});
   const [isAudioLoading, setIsAudioLoading] = useState(false);
-  
+
   const [showFrequentOnly, setShowFrequentOnly] = useState(false);
   const [puzzleQueue, setPuzzleQueue] = useState([]);
-  const [puzzleMode, setPuzzleMode] = useState('hi-kn'); 
+  const [puzzleMode, setPuzzleMode] = useState('hi-kn');
   const [puzzleState, setPuzzleState] = useState({ target: null, options: [], wrongIds: [], isSolved: false, isFirstAttempt: true, isComplete: false });
   const [puzzleStats, setPuzzleStats] = useState({ score: 0, perfectGuesses: 0, streak: 0 });
 
-  const [theme, setTheme] = useState("light"); 
+  const [theme, setTheme] = useState("light");
   const [streak, setStreak] = useState(0);
 
   const padRef = useRef(null);
   const resultRef = useRef(null);
 
-  // Derived dataset pool (used for navigation and rounds)
+  // Derived dataset pool
   const currentFullList = category ? charData.filter(c => c.type === category) : charData;
   const currentList = currentFullList.filter(c => !showFrequentOnly || c.isFrequent);
 
@@ -277,52 +335,38 @@ export default function App() {
   const prevCharData = currentIndex > 0 ? currentList[currentIndex - 1] : null;
   const nextCharData = currentIndex < currentList.length - 1 ? currentList[currentIndex + 1] : null;
 
+  // Firebase Initialization & Auth
   useEffect(() => {
-    let firebaseConfigJson;
-    console.log("firebaseConfig_env", typeof __firebase_config !== 'undefined');
-    if (typeof __firebase_config !== 'undefined' && __firebase_config) {
-      firebaseConfigJson = __firebase_config;
-    } else {
-      firebaseConfigJson = import.meta.env.VITE_FIREBASE_CONFIG
-      console.log("firebaseConfig", firebaseConfigJson);
-    }
+    const initAuth = async () => {
+      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+        await signInWithCustomToken(auth, __initial_auth_token);
+      } else {
+        await signInAnonymously(auth);
+      }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, setUser);
+    return () => unsubscribe();
+  }, []);
 
-    if (firebaseConfigJson) {
-        try {
-            const app = initializeApp(JSON.parse(firebaseConfigJson));
-      const auth = getAuth(app);
-            const db = getFirestore(app);
-            
-            const initAuth = async () => { 
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token); 
-        else await signInAnonymously(auth); 
-      };
-            initAuth(); 
-            
-            onAuthStateChanged(auth, setUser);
-
-            if (user) {
-    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-              onSnapshot(collection(db, 'artifacts', appId, 'users', user.uid, 'progress'), (snap) => {
+  // Data Fetching
+  useEffect(() => {
+    if (!user) return;
+    const unsubProgress = onSnapshot(collection(db, 'artifacts', appId, 'users', user.uid, 'progress'), (snap) => {
       const p = {}; snap.forEach(d => p[d.id] = true); setCompletedChars(p);
-    });
+    }, (err) => console.error(err));
     const streakRef = doc(db, 'artifacts', appId, 'users', user.uid, 'profile', 'stats');
-    getDoc(streakRef).then(d => { if(d.exists()) setStreak(d.data().streak || 0); });
-            }
-        } catch (err) { 
-            console.error("Firebase init failed:", err); 
-            setError("Firebase initialization failed.");
-        }
-    }
+    getDoc(streakRef).then(d => { if (d.exists()) setStreak(d.data().streak || 0); });
+    return () => unsubProgress();
   }, [user]);
 
   // RESET PUZZLE ON FREQUENT TOGGLE
   useEffect(() => {
     if (view === 'puzzle') {
-        const baseSet = showFrequentOnly ? charData.filter(c => c.isFrequent) : charData;
-        const shuffled = [...baseSet].sort(() => Math.random() - 0.5);
-        setPuzzleQueue(shuffled);
-        generatePuzzle(shuffled, puzzleMode);
+      const pool = charData.filter(c => !showFrequentOnly || c.isFrequent);
+      const shuffled = [...pool].sort(() => Math.random() - 0.5);
+      setPuzzleQueue(shuffled);
+      generatePuzzle(shuffled, puzzleMode);
     }
   }, [showFrequentOnly]);
 
@@ -350,33 +394,30 @@ export default function App() {
     if (audioCache[selectedChar.id]) { new Audio(audioCache[selectedChar.id]).play(); return; }
     setIsAudioLoading(true);
     try {
-        const url = await callGeminiAudio(text); setAudioCache(p => ({ ...p, [selectedChar.id]: url }));
-        new Audio(url).play();
+      const url = await callGeminiAudio(text); setAudioCache(p => ({ ...p, [selectedChar.id]: url }));
+      new Audio(url).play();
     } catch { setError("Audio failed."); } finally { setIsAudioLoading(false); }
   };
 
   const run = async (feat, fn) => {
     setError(null); setActiveFeature(feat); setIsAiLoading(true);
     try { const res = await fn(selectedChar); setAiData(p => ({ ...p, [feat]: res })); }
-    catch { setError("AI error."); setActiveFeature(null); } finally { setIsAiLoading(false); }
+    catch (err) { console.error(err); setError("AI error."); setActiveFeature(null); } finally { setIsAiLoading(false); }
   };
 
   const toggleMastered = async () => {
     if (!user || !selectedChar) return;
-    const db = getFirestore();
-    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
     const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'progress', selectedChar.id);
     if (completedChars[selectedChar.id]) await deleteDoc(docRef);
     else await setDoc(docRef, { learned: true, updatedAt: new Date().toISOString() });
+    triggerHaptic(50);
   };
 
   const startNewPuzzleRound = (mode = 'hi-kn') => {
     setPuzzleMode(mode);
-    const baseSet = showFrequentOnly ? charData.filter(c => c.isFrequent) : charData;
-    const shuffled = [...baseSet].sort(() => Math.random() - 0.5);
-    setPuzzleQueue(shuffled); 
-    generatePuzzle(shuffled, mode); 
-    setView('puzzle');
+    const pool = charData.filter(c => !showFrequentOnly || c.isFrequent);
+    const shuffled = [...pool].sort(() => Math.random() - 0.5);
+    setPuzzleQueue(shuffled); generatePuzzle(shuffled, mode); setView('puzzle');
   };
 
   const generatePuzzle = (currentQueue = puzzleQueue, mode = puzzleMode) => {
@@ -384,27 +425,27 @@ export default function App() {
     const t = currentQueue[0]; const newQueue = currentQueue.slice(1);
     setPuzzleQueue(newQueue);
     let opts = [t];
-    const pool = showFrequentOnly ? charData.filter(c => c.isFrequent) : charData;
-    while(opts.length < 4) {
+    const pool = charData.filter(c => !showFrequentOnly || c.isFrequent);
+    while (opts.length < 4) {
       const r = pool[Math.floor(Math.random() * pool.length)];
-      if(!opts.find(o => o.id === r.id)) opts.push(r);
+      if (!opts.find(o => o.id === r.id)) opts.push(r);
     }
     setPuzzleState({ target: t, options: opts.sort(() => Math.random() - 0.5), wrongIds: [], isSolved: false, isFirstAttempt: true, isComplete: false });
   };
 
   const handlePuzzleGuess = (option) => {
     if (option.id === puzzleState.target.id) {
-        triggerHaptic(50);
-        setPuzzleStats(prev => ({
-            ...prev, score: prev.score + 2,
-            perfectGuesses: prev.perfectGuesses + (puzzleState.isFirstAttempt ? 1 : 0),
-            streak: prev.streak + 1
-        }));
-        setPuzzleState(prev => ({ ...prev, isSolved: true }));
+      triggerHaptic(50);
+      setPuzzleStats(prev => ({
+        ...prev, score: prev.score + 2,
+        perfectGuesses: prev.perfectGuesses + (puzzleState.isFirstAttempt ? 1 : 0),
+        streak: prev.streak + 1
+      }));
+      setPuzzleState(prev => ({ ...prev, isSolved: true }));
     } else {
-        triggerHaptic([100, 50, 100]);
-        setPuzzleStats(prev => ({ ...prev, score: Math.max(0, prev.score - 1), streak: 0 }));
-        setPuzzleState(prev => ({ ...prev, wrongIds: [...prev.wrongIds, option.id], isFirstAttempt: false }));
+      triggerHaptic([100, 50, 100]);
+      setPuzzleStats(prev => ({ ...prev, score: Math.max(0, prev.score - 1), streak: 0 }));
+      setPuzzleState(prev => ({ ...prev, wrongIds: [...prev.wrongIds, option.id], isFirstAttempt: false }));
     }
   };
 
@@ -430,15 +471,15 @@ export default function App() {
         {view === 'home' && (
           <div className="space-y-4 sm:space-y-6 animate-in fade-in duration-300 pb-12">
             <div className={`p-4 sm:p-6 rounded-2xl shadow-sm border-2 flex items-center gap-4 sm:gap-5 ${theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
-               <div className={`p-3 sm:p-4 rounded-2xl flex items-center justify-center ${theme === 'dark' ? 'bg-indigo-900/30 text-indigo-400' : 'bg-green-100 text-green-600'}`}><Trophy size={24} /></div>
-               <div className="flex-1">
-                 <div className="flex justify-between text-[10px] sm:text-xs font-bold mb-1 sm:mb-2 text-slate-500 tracking-wider">LEARNING GOAL <span>{Object.keys(completedChars).length} / {charData.length}</span></div>
-                 <div className={`h-2 sm:h-3 rounded-full overflow-hidden ${theme === 'dark' ? 'bg-slate-700' : 'bg-slate-100'}`}><div className="h-full bg-indigo-500 transition-all duration-700 ease-out" style={{ width: `${(Object.keys(completedChars).length / charData.length) * 100}%` }}></div></div>
-               </div>
-               <div className="flex flex-col items-center px-2 sm:px-4 border-l border-slate-700">
-                  <Flame className="text-orange-500 fill-orange-500 animate-pulse" size={20} />
-                  <span className="text-base sm:text-lg font-black">{streak}</span>
-               </div>
+              <div className={`p-3 sm:p-4 rounded-2xl flex items-center justify-center ${theme === 'dark' ? 'bg-indigo-900/30 text-indigo-400' : 'bg-green-100 text-green-600'}`}><Trophy size={24} /></div>
+              <div className="flex-1">
+                <div className="flex justify-between text-[10px] sm:text-xs font-bold mb-1 sm:mb-2 text-slate-500 tracking-wider">LEARNING GOAL <span>{Object.keys(completedChars).length} / {charData.length}</span></div>
+                <div className={`h-2 sm:h-3 rounded-full overflow-hidden ${theme === 'dark' ? 'bg-slate-700' : 'bg-slate-100'}`}><div className="h-full bg-indigo-500 transition-all duration-700 ease-out" style={{ width: `${(Object.keys(completedChars).length / charData.length) * 100}%` }}></div></div>
+              </div>
+              <div className="flex flex-col items-center px-2 sm:px-4 border-l border-slate-700">
+                <Flame className="text-orange-500 fill-orange-500 animate-pulse" size={20} />
+                <span className="text-base sm:text-lg font-black">{streak}</span>
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
@@ -463,16 +504,16 @@ export default function App() {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <button onClick={() => startNewPuzzleRound('hi-kn')} className="w-full bg-gradient-to-r from-indigo-600 to-violet-600 p-5 sm:p-6 rounded-3xl text-white flex items-center gap-4 shadow-2xl shadow-indigo-500/20 group hover:scale-[1.01] transition-all active:scale-95">
-                    <div className="p-3 bg-white/20 rounded-2xl group-hover:rotate-12 transition-transform font-black text-xl">ಅ</div>
-                    <div className="text-left"><h4 className="font-bold text-base sm:text-lg">Mastery (अ → ಅ)</h4><p className="text-[10px] sm:text-xs text-indigo-100 opacity-80">Identify Kannada from Hindi</p></div>
-                    <ArrowRight className="ml-auto" size={20} />
-                </button>
-                <button onClick={() => startNewPuzzleRound('kn-hi')} className="w-full bg-gradient-to-r from-violet-600 to-fuchsia-600 p-5 sm:p-6 rounded-3xl text-white flex items-center gap-4 shadow-2xl shadow-fuchsia-500/20 group hover:scale-[1.01] transition-all active:scale-95">
-                    <div className="p-3 bg-white/20 rounded-2xl group-hover:-rotate-12 transition-transform font-black text-xl">अ</div>
-                    <div className="text-left"><h4 className="font-bold text-base sm:text-lg">Reverse (ಅ → अ)</h4><p className="text-[10px] sm:text-xs text-fuchsia-100 opacity-80">Identify Hindi from Kannada</p></div>
-                    <ArrowRight className="ml-auto" size={20} />
-                </button>
+              <button onClick={() => startNewPuzzleRound('hi-kn')} className="w-full bg-gradient-to-r from-indigo-600 to-violet-600 p-5 sm:p-6 rounded-3xl text-white flex items-center gap-4 shadow-2xl shadow-indigo-500/20 group hover:scale-[1.01] transition-all active:scale-95">
+                <div className="p-3 bg-white/20 rounded-2xl group-hover:rotate-12 transition-transform font-black text-xl">ಅ</div>
+                <div className="text-left"><h4 className="font-bold text-base sm:text-lg">Mastery (अ → ಅ)</h4><p className="text-[10px] sm:text-xs text-indigo-100 opacity-80">Identify Kannada from Hindi</p></div>
+                <ArrowRight className="ml-auto" size={20} />
+              </button>
+              <button onClick={() => startNewPuzzleRound('kn-hi')} className="w-full bg-gradient-to-r from-violet-600 to-fuchsia-600 p-5 sm:p-6 rounded-3xl text-white flex items-center gap-4 shadow-2xl shadow-fuchsia-500/20 group hover:scale-[1.01] transition-all active:scale-95">
+                <div className="p-3 bg-white/20 rounded-2xl group-hover:-rotate-12 transition-transform font-black text-xl">अ</div>
+                <div className="text-left"><h4 className="font-bold text-base sm:text-lg">Reverse (ಅ → अ)</h4><p className="text-[10px] sm:text-xs text-fuchsia-100 opacity-80">Identify Hindi from Kannada</p></div>
+                <ArrowRight className="ml-auto" size={20} />
+              </button>
             </div>
           </div>
         )}
@@ -501,22 +542,22 @@ export default function App() {
                 <div className="flex flex-col items-center">
                   <div className="flex items-center gap-3">
                     <div className="flex flex-col items-center">
-                        <span className={`text-4xl sm:text-6xl font-serif font-black ${theme === 'dark' ? 'text-slate-100' : 'text-slate-900'}`}>{selectedChar.hindi}</span>
-                        {selectedChar.vowelType && (
-                            <div className="flex items-center gap-1 bg-indigo-500/10 px-2 py-0.5 rounded-full">
-                                <Clock size={10} className="text-indigo-500" />
-                                <span className="text-[10px] font-black uppercase text-indigo-500 tracking-tighter">{selectedChar.vowelType === 'Short' ? '1 Beat' : '2 Beats'}</span>
-                            </div>
-                        )}
-                        {selectedChar.isDravidianUnique && !selectedChar.vowelType && (
-                            <div className="flex items-center gap-1 bg-rose-500/10 px-2 py-0.5 rounded-full">
-                                <span className="text-[10px] font-black uppercase text-rose-500 tracking-tighter">Unique Sound</span>
-                            </div>
-                        )}
+                      <span className={`text-4xl sm:text-6xl font-serif font-black ${theme === 'dark' ? 'text-slate-100' : 'text-slate-900'}`}>{selectedChar.hindi}</span>
+                      {selectedChar.vowelType && (
+                        <div className="flex items-center gap-1 bg-indigo-500/10 px-2 py-0.5 rounded-full">
+                          <Clock size={10} className="text-indigo-500" />
+                          <span className="text-[10px] font-black uppercase text-indigo-500 tracking-tighter">{selectedChar.vowelType === 'Short' ? '1 Beat' : '2 Beats'}</span>
+                        </div>
+                      )}
+                      {selectedChar.isDravidianUnique && !selectedChar.vowelType && (
+                        <div className="flex items-center gap-1 bg-rose-500/10 px-2 py-0.5 rounded-full">
+                          <span className="text-[10px] font-black uppercase text-rose-500 tracking-tighter">Unique Sound</span>
+                        </div>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
-                        <span className="text-7xl sm:text-9xl text-indigo-500 font-serif font-black">{selectedChar.kannada}</span>
-                        <button onClick={() => handlePlayAudio(selectedChar.kannada)} disabled={isAudioLoading} className={`p-2 sm:p-3 rounded-2xl border-2 transition-all shadow-md ${theme === 'dark' ? 'bg-slate-800 border-slate-700 text-indigo-400 hover:bg-slate-700' : 'bg-white border-indigo-200 text-indigo-600 hover:bg-indigo-50'}`}>{isAudioLoading ? <Loader2 className="animate-spin" size={20} /> : <Volume2 size={24} />}</button>
+                      <span className="text-7xl sm:text-9xl text-indigo-500 font-serif font-black">{selectedChar.kannada}</span>
+                      <button onClick={() => handlePlayAudio(selectedChar.kannada)} disabled={isAudioLoading} className={`p-2 sm:p-3 rounded-2xl border-2 transition-all shadow-md ${theme === 'dark' ? 'bg-slate-800 border-slate-700 text-indigo-400 hover:bg-slate-700' : 'bg-white border-indigo-200 text-indigo-600 hover:bg-indigo-50'}`}>{isAudioLoading ? <Loader2 className="animate-spin" size={20} /> : <Volume2 size={24} />}</button>
                     </div>
                   </div>
                   <div className="flex items-center gap-3 mt-1">
@@ -536,18 +577,12 @@ export default function App() {
             <div className="w-full max-w-lg space-y-4 sm:space-y-6 pt-4 px-2">
               <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
                 {[
-                  { id: 'tutor', icon: <Sparkles size={18} />, label: 'Explain', fn: () => run('tutor', async (char) => {
-                    const prompt = `Mnemonic & 2 words for Kannada '${char.kannada}'. Hindi explanations. JSON: { "mnemonic": "string", "words": [{ "kannada": "string", "meaning": "string" }] }`;
-                    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
-                      method: 'POST', headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json" } })
-                    });
-                    const data = await res.json(); return JSON.parse(data.candidates[0].content.parts[0].text);
-                  }) },
+                  { id: 'tutor', icon: <Sparkles size={18} />, label: 'Explain', fn: () => run('tutor', callGeminiTutor) },
                   { id: 'usage', icon: <Quote size={18} />, label: 'Usage', fn: () => run('usage', callGeminiUsage) },
-                  { id: 'feedback', icon: <Check size={18} />, label: 'Verify', fn: async () => run('feedback', () => callGeminiVision(padRef.current.getCanvasImage(), selectedChar)) }
+                  { id: 'feedback', icon: <Check size={18} />, label: 'Verify', fn: async () => run('feedback', () => callGeminiVision(padRef.current.getCanvasImage(), selectedChar)) },
+                  { id: 'mastery_btn', icon: completedChars[selectedChar.id] ? <CheckSquare size={18} /> : <Target size={18} />, label: completedChars[selectedChar.id] ? 'Learned' : 'Master', fn: toggleMastered }
                 ].map(tool => (
-                  <button key={tool.id} onClick={tool.fn} className={`flex flex-col items-center justify-center py-3 rounded-2xl border-2 transition-all active:scale-95 ${activeFeature === tool.id ? 'bg-indigo-50 border-indigo-400 text-white shadow-xl' : (theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-400 hover:border-indigo-500' : 'bg-white border-slate-100 text-slate-500 hover:border-indigo-300 shadow-sm')}`}>
+                  <button key={tool.id} onClick={tool.fn} className={`flex flex-col items-center justify-center py-3 rounded-2xl border-2 transition-all active:scale-95 ${tool.id === 'mastery_btn' && completedChars[selectedChar.id] ? 'bg-green-500 border-green-400 text-white shadow-lg' : activeFeature === tool.id ? 'bg-indigo-50 border-indigo-400 text-white shadow-xl' : (theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-400 hover:border-indigo-500' : 'bg-white border-slate-100 text-slate-500 hover:border-indigo-300 shadow-sm')}`}>
                     {tool.icon}<span className="text-[8px] font-black mt-1 uppercase tracking-tighter">{tool.label}</span>
                   </button>
                 ))}
@@ -555,17 +590,45 @@ export default function App() {
               {isAiLoading && <div className="flex justify-center py-4"><Loader2 className="animate-spin text-indigo-400" size={32} /></div>}
               {activeFeature && (
                 <div ref={resultRef} className={`p-5 sm:p-8 rounded-[2rem] border-2 shadow-xl animate-in slide-in-from-bottom-6 duration-300 ${theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100'}`}>
-                   {activeFeature === 'usage' && aiData.usage && (
-                     <div className="text-center p-2 space-y-4">
-                        <p className="text-2xl sm:text-3xl font-serif text-indigo-500 font-black">{aiData.usage.sentence}</p>
-                        <div className={`p-4 rounded-[2rem] border-2 shadow-inner ${theme === 'dark' ? 'bg-slate-900/50 border-slate-700' : 'bg-slate-50 border-indigo-100'}`}>
-                          <p className={`text-2xl sm:text-3xl font-black leading-relaxed ${theme === 'dark' ? 'text-white' : 'text-slate-950'}`}>{aiData.usage.hindi_script_representation}</p>
-                        </div>
-                        <div className={`p-4 rounded-2xl border-2 ${theme === 'dark' ? 'bg-indigo-900/20 border-indigo-800' : 'bg-cyan-50 border-cyan-100'}`}>
-                          <p className={`text-xl sm:text-2xl font-black ${theme === 'dark' ? 'text-indigo-300' : 'text-cyan-950'}`}>{aiData.usage.hindi_translation}</p>
-                        </div>
-                     </div>
-                   )}
+                  {activeFeature === 'usage' && aiData.usage && (
+                    <div className="text-center p-2 space-y-4">
+                      <p className="text-2xl sm:text-3xl font-serif text-indigo-500 font-black">{aiData.usage.sentence}</p>
+                      <div className={`p-4 rounded-[2rem] border-2 shadow-inner ${theme === 'dark' ? 'bg-slate-900/50 border-slate-700' : 'bg-slate-50 border-indigo-100'}`}>
+                        <p className={`text-2xl sm:text-3xl font-black leading-relaxed ${theme === 'dark' ? 'text-white' : 'text-slate-950'}`}>{aiData.usage.hindi_script_representation}</p>
+                      </div>
+                      <div className={`p-4 rounded-2xl border-2 ${theme === 'dark' ? 'bg-indigo-900/20 border-indigo-800' : 'bg-cyan-50 border-cyan-100'}`}>
+                        <p className={`text-xl sm:text-2xl font-black ${theme === 'dark' ? 'text-indigo-300' : 'text-cyan-950'}`}>{aiData.usage.hindi_translation}</p>
+                      </div>
+                    </div>
+                  )}
+                  {activeFeature === 'tutor' && aiData.tutor && (
+                    <div className="space-y-6">
+                      <p className={`italic text-lg sm:text-xl font-bold leading-relaxed text-center ${theme === 'dark' ? 'text-slate-200' : 'text-slate-900'}`}>"{aiData.tutor.mnemonic}"</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {aiData.tutor.words?.map((w, i) => (
+                          <div key={i} className={`p-4 rounded-[2rem] border-2 flex flex-col items-center gap-2 ${theme === 'dark' ? 'bg-slate-700/50 border-slate-600' : 'bg-indigo-50 border-indigo-100 shadow-sm'}`}>
+                            <span className="text-3xl font-black text-indigo-600">{w.kannada}</span>
+                            <div className={`w-full p-4 rounded-3xl border-2 shadow-inner flex flex-col items-center justify-center ${theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-white border-indigo-50'}`}>
+                              <span className={`text-2xl font-black ${theme === 'dark' ? 'text-white' : 'text-slate-950'}`}>{w.hindi_sound}</span>
+                            </div>
+                            <div className="text-center pt-1">
+                              <span className={`text-sm font-bold ${theme === 'dark' ? 'text-slate-300' : 'text-slate-700'}`}>हिंदी: {w.hindi_meaning}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {activeFeature === 'feedback' && aiData.feedback && (
+                    <div className="text-center p-2 space-y-4">
+                      <div className="flex justify-center gap-1">
+                        {[1, 2, 3, 4, 5].map((star) => (
+                          <Star key={star} size={24} className={`${star <= aiData.feedback.rating ? "text-amber-500 fill-amber-500" : "text-slate-300"}`} />
+                        ))}
+                      </div>
+                      <p className={`text-xl font-black ${theme === 'dark' ? 'text-slate-100' : 'text-slate-900'}`}>{aiData.feedback.feedback}</p>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -651,7 +714,7 @@ export default function App() {
                       <button key={o.id} disabled={puzzleState.isSolved || isWrong} onClick={() => handlePuzzleGuess(o)} 
                         className={`w-full h-24 sm:h-36 rounded-2xl sm:rounded-[2rem] border-2 flex flex-col items-center justify-center transition-all ${isCorrect ? 'bg-green-500 border-green-400 text-white shadow-xl scale-105 z-10' : isWrong ? 'bg-red-50/10 border-red-500/20 opacity-40 scale-95 cursor-not-allowed' : (theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-200 hover:border-indigo-500 shadow-lg' : 'bg-white border-slate-200 text-slate-800 hover:border-indigo-400 shadow-sm')}`}
                       >
-                        <span className={`${isCorrect || isWrong ? 'text-2xl sm:text-4xl' : 'text-5xl sm:text-6xl'} font-bold mb-1 transition-all`}>
+                        <span className={`${isCorrect || isWrong ? 'text-2xl sm:text-4xl' : 'text-5xl sm:text-6xl'} font-black mb-1 transition-all`}>
                             {puzzleMode === 'hi-kn' ? o.kannada : o.hindi}
                         </span>
                         
