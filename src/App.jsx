@@ -13,7 +13,7 @@ import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged }
 import { getFirestore, doc, setDoc, onSnapshot, collection, deleteDoc, getDoc } from 'firebase/firestore';
 
 // --- GEMINI API UTILS & PROXY LOGIC ---
-const apiKey = ""; 
+const apiKey = "";
 const proxyUrl = typeof __firebase_ai_proxy !== 'undefined' ? __firebase_ai_proxy : '';
 
 /**
@@ -21,11 +21,11 @@ const proxyUrl = typeof __firebase_ai_proxy !== 'undefined' ? __firebase_ai_prox
  */
 const getGeminiUrl = (endpointPath) => {
   const cleanPath = endpointPath.startsWith('/') ? endpointPath.slice(1) : endpointPath;
-  
+
   if (apiKey) {
     return `https://generativelanguage.googleapis.com/v1beta/${cleanPath}?key=${apiKey}`;
   }
-  
+
   if (proxyUrl) {
     const base = proxyUrl.endsWith('/') ? proxyUrl.slice(0, -1) : proxyUrl;
     return `${base}/v1beta/${cleanPath}`;
@@ -70,7 +70,7 @@ const triggerHaptic = (pattern) => {
   }
 };
 
-const fetchWithRetry = async (url, options, retries =2, backoff = 1000) => {
+const fetchWithRetry = async (url, options, retries = 2, backoff = 1000) => {
   try {
     const response = await fetch(url, options);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -107,7 +107,7 @@ const callGeminiAudio = async (kannadaChar, retryCount = 0) => {
     }
   };
   try {
-    const response = await fetch(getGeminiUrl('models/gemini-2.5-flash-preview-tts:generateContent'), {
+    const response = await fetch(getGeminiUrl('models/gemini-2.5-flash-tts:generateContent'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -128,7 +128,7 @@ const callGeminiAudio = async (kannadaChar, retryCount = 0) => {
 const callGeminiUsage = async (charData) => {
   const prompt = `Simple Kannada sentence using '${charData.kannada}'. Output JSON: { "sentence": "string (Kannada Script)", "hindi_script_representation": "string (Phonetic sound in Hindi script)", "hindi_translation": "string (Actual meaning in Hindi)" }`;
   const data = await fetchWithRetry(
-    getGeminiUrl('models/gemini-2.5-flash-preview-09-2025:generateContent'),
+    getGeminiUrl('models/gemini-2.5-flash:generateContent'),
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -141,7 +141,7 @@ const callGeminiUsage = async (charData) => {
 const callGeminiTutor = async (charData) => {
   const prompt = `2 words for kids starting with Kannada character '${charData.kannada}'. Output JSON format: { "mnemonic": "string (Hindi)", "words": [{ "kannada": "string", "hindi_sound": "string (PHONETIC sound only in Hindi script)", "hindi_meaning": "string (Actual translation in Hindi)" }] }`;
   const data = await fetchWithRetry(
-    getGeminiUrl('models/gemini-2.5-flash-preview-09-2025:generateContent'),
+    getGeminiUrl('models/gemini-2.5-flash:generateContent'),
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -155,7 +155,7 @@ const callGeminiVision = async (base64Image, charData) => {
   if (!base64Image) throw new Error("No image data");
   const prompt = `Handwriting analysis. I have written the Kannada character '${charData.kannada}'. Rate my attempt 1-5. Provide a tip in simple Hindi. Output JSON format: { "rating": number, "feedback": "string" }`;
   const data = await fetchWithRetry(
-    getGeminiUrl('models/gemini-2.5-flash-preview-09-2025:generateContent'),
+    getGeminiUrl('models/gemini-2.5-flash:generateContent'),
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -376,7 +376,7 @@ export default function App() {
       }
     };
     initAuth();
-    const unsubscribe = auth ? onAuthStateChanged(auth, setUser) : () => {};
+    const unsubscribe = auth ? onAuthStateChanged(auth, setUser) : () => { };
     return () => unsubscribe();
   }, []);
 
@@ -668,103 +668,103 @@ export default function App() {
 
         {view === 'puzzle' && (
           <div className="max-w-md mx-auto space-y-4 sm:space-y-6 animate-in fade-in duration-300 pb-32 pt-2 flex flex-col items-center">
-            
+
             <div className="w-full px-2 pt-2">
-                <div className={`h-1 w-full rounded-full overflow-hidden ${theme === 'dark' ? 'bg-slate-800' : 'bg-slate-200'}`}>
-                    <div 
-                        className={`h-full transition-all duration-700 ease-out ${puzzleMode === 'hi-kn' ? 'bg-indigo-500' : 'bg-fuchsia-500'}`}
-                        style={{ width: `${((puzzleQueue.length === 0 && puzzleState.isComplete ? 1 : (currentList.length - puzzleQueue.length) / currentList.length)) * 100}%` }}
-                    />
-                </div>
-                <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-2 text-center">
-                    Round Progress: {currentList.length - puzzleQueue.length} / {currentList.length}
-                </p>
+              <div className={`h-1 w-full rounded-full overflow-hidden ${theme === 'dark' ? 'bg-slate-800' : 'bg-slate-200'}`}>
+                <div
+                  className={`h-full transition-all duration-700 ease-out ${puzzleMode === 'hi-kn' ? 'bg-indigo-500' : 'bg-fuchsia-500'}`}
+                  style={{ width: `${((puzzleQueue.length === 0 && puzzleState.isComplete ? 1 : (currentList.length - puzzleQueue.length) / currentList.length)) * 100}%` }}
+                />
+              </div>
+              <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mt-2 text-center">
+                Round Progress: {currentList.length - puzzleQueue.length} / {currentList.length}
+              </p>
             </div>
 
             {puzzleState.isComplete ? (
-                <div className={`w-full p-8 rounded-[2.5rem] border-2 text-center space-y-6 ${theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100 shadow-xl'}`}>
-                    <Trophy size={40} className="mx-auto text-green-600" />
-                    <h2 className="text-3xl font-black text-slate-800 dark:text-white">Round Complete!</h2>
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="p-4 rounded-2xl bg-indigo-50 dark:bg-indigo-950/30 text-indigo-600">
-                            <p className="text-xs uppercase font-bold text-slate-500">Score</p>
-                            <p className="text-2xl font-black">{puzzleStats.score}</p>
-                        </div>
-                        <div className="p-4 rounded-2xl bg-indigo-50 dark:bg-indigo-950/30 text-indigo-600">
-                            <p className="text-xs uppercase font-bold text-slate-500">Perfects</p>
-                            <p className="text-2xl font-black">{puzzleStats.perfectGuesses}</p>
-                        </div>
-                    </div>
-                    <button onClick={() => startNewPuzzleRound(puzzleMode)} className={`w-full py-5 text-white rounded-3xl font-black text-xl shadow-xl transition-all active:scale-95 ${puzzleMode === 'hi-kn' ? 'bg-indigo-600' : 'bg-fuchsia-600'}`}>Start New Round</button>
+              <div className={`w-full p-8 rounded-[2.5rem] border-2 text-center space-y-6 ${theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-100 shadow-xl'}`}>
+                <Trophy size={40} className="mx-auto text-green-600" />
+                <h2 className="text-3xl font-black text-slate-800 dark:text-white">Round Complete!</h2>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="p-4 rounded-2xl bg-indigo-50 dark:bg-indigo-950/30 text-indigo-600">
+                    <p className="text-xs uppercase font-bold text-slate-500">Score</p>
+                    <p className="text-2xl font-black">{puzzleStats.score}</p>
+                  </div>
+                  <div className="p-4 rounded-2xl bg-indigo-50 dark:bg-indigo-950/30 text-indigo-600">
+                    <p className="text-xs uppercase font-bold text-slate-500">Perfects</p>
+                    <p className="text-2xl font-black">{puzzleStats.perfectGuesses}</p>
+                  </div>
                 </div>
+                <button onClick={() => startNewPuzzleRound(puzzleMode)} className={`w-full py-5 text-white rounded-3xl font-black text-xl shadow-xl transition-all active:scale-95 ${puzzleMode === 'hi-kn' ? 'bg-indigo-600' : 'bg-fuchsia-600'}`}>Start New Round</button>
+              </div>
             ) : puzzleState.target && (
               <>
                 <div className={`w-full grid grid-cols-3 gap-2 p-3 rounded-2xl border-2 shadow-sm ${theme === 'dark' ? 'bg-slate-800/50 border-slate-700' : 'bg-white border-slate-100'}`}>
-                    <div className="flex flex-col items-center">
-                        <Trophy size={14} className="text-amber-500 mb-0.5" />
-                        <span className="text-base font-black">{puzzleStats.score}</span>
-                        <span className="text-[8px] uppercase font-bold text-slate-500">Score</span>
-                    </div>
-                    <div className="flex flex-col items-center border-x border-slate-200 dark:border-slate-700">
-                        <Target size={14} className="text-indigo-500 mb-0.5" />
-                        <span className="text-base font-black">{puzzleStats.perfectGuesses}</span>
-                        <span className="text-[8px] uppercase font-bold text-slate-500">Perfects</span>
-                    </div>
-                    <div className="flex flex-col items-center">
-                        <Zap size={14} className="text-orange-500 mb-0.5" />
-                        <span className="text-base font-black">{puzzleStats.streak}</span>
-                        <span className="text-[8px] uppercase font-bold text-slate-500">Streak</span>
-                    </div>
+                  <div className="flex flex-col items-center">
+                    <Trophy size={14} className="text-amber-500 mb-0.5" />
+                    <span className="text-base font-black">{puzzleStats.score}</span>
+                    <span className="text-[8px] uppercase font-bold text-slate-500">Score</span>
+                  </div>
+                  <div className="flex flex-col items-center border-x border-slate-200 dark:border-slate-700">
+                    <Target size={14} className="text-indigo-500 mb-0.5" />
+                    <span className="text-base font-black">{puzzleStats.perfectGuesses}</span>
+                    <span className="text-[8px] uppercase font-bold text-slate-500">Perfects</span>
+                  </div>
+                  <div className="flex flex-col items-center">
+                    <Zap size={14} className="text-orange-500 mb-0.5" />
+                    <span className="text-base font-black">{puzzleStats.streak}</span>
+                    <span className="text-[8px] uppercase font-bold text-slate-500">Streak</span>
+                  </div>
                 </div>
 
                 <div className="text-center w-full">
                   <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-2 italic text-center">
                     {puzzleMode === 'hi-kn' ? 'Identify Kannada for' : 'Identify Sound (Hindi) for'}
                   </p>
-                  
+
                   <div className={`w-28 h-28 sm:w-36 sm:h-36 border-4 rounded-3xl mx-auto flex items-center justify-center text-7xl sm:text-8xl font-serif shadow-xl transition-all ${theme === 'dark' ? 'bg-slate-800 border-indigo-500 text-indigo-400' : 'bg-white border-indigo-100 text-indigo-600'}`}>
                     <div className="flex flex-col items-center">
-                        <span>{puzzleMode === 'hi-kn' ? puzzleState.target.hindi : puzzleState.target.kannada}</span>
-                        {(puzzleState.target.vowelType || (puzzleMode === 'kn-hi' && puzzleState.target.isDravidianUnique)) && (
-                            <div className="flex items-center gap-0.5 text-indigo-500 -mt-2">
-                                <Clock size={8} />
-                                <span className="text-[9px] font-black">
-                                    {puzzleState.target.vowelType === 'Short' ? '1●' : puzzleState.target.vowelType === 'Long' ? '2●' : 'Unique'}
-                                </span>
-                            </div>
-                        )}
+                      <span>{puzzleMode === 'hi-kn' ? puzzleState.target.hindi : puzzleState.target.kannada}</span>
+                      {(puzzleState.target.vowelType || (puzzleMode === 'kn-hi' && puzzleState.target.isDravidianUnique)) && (
+                        <div className="flex items-center gap-0.5 text-indigo-500 -mt-2">
+                          <Clock size={8} />
+                          <span className="text-[9px] font-black">
+                            {puzzleState.target.vowelType === 'Short' ? '1●' : puzzleState.target.vowelType === 'Long' ? '2●' : 'Unique'}
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
-                
+
                 <div className="grid grid-cols-2 gap-3 py-1 w-full flex-1">
                   {puzzleState.options.map(o => {
                     const isCorrect = puzzleState.isSolved && o.id === puzzleState.target.id;
                     const isWrong = puzzleState.wrongIds.includes(o.id);
                     return (
-                      <button key={o.id} disabled={puzzleState.isSolved || isWrong} onClick={() => handlePuzzleGuess(o)} 
+                      <button key={o.id} disabled={puzzleState.isSolved || isWrong} onClick={() => handlePuzzleGuess(o)}
                         className={`w-full h-24 sm:h-36 rounded-2xl sm:rounded-[2rem] border-2 flex flex-col items-center justify-center transition-all ${isCorrect ? 'bg-green-500 border-green-400 text-white shadow-xl scale-105 z-10' : isWrong ? 'bg-red-50/10 border-red-500/20 opacity-40 scale-95 cursor-not-allowed' : (theme === 'dark' ? 'bg-slate-800 border-slate-700 text-slate-200 hover:border-indigo-500 shadow-lg' : 'bg-white border-slate-200 text-slate-800 hover:border-indigo-400 shadow-sm')}`}
                       >
                         <span className={`${isCorrect || isWrong ? 'text-2xl sm:text-4xl' : 'text-5xl sm:text-6xl'} font-black mb-1 transition-all`}>
-                            {puzzleMode === 'hi-kn' ? o.kannada : o.hindi}
+                          {puzzleMode === 'hi-kn' ? o.kannada : o.hindi}
                         </span>
-                        
+
                         {(isCorrect || isWrong) && (
-                            <div className="animate-in fade-in zoom-in duration-300 flex flex-col items-center">
-                                <span className="text-[8px] sm:text-[10px] font-bold uppercase tracking-widest opacity-60">is</span>
-                                <span className={`text-xl sm:text-4xl font-black font-serif ${isCorrect ? 'text-white' : 'text-red-700'}`}>
-                                    {puzzleMode === 'hi-kn' ? o.hindi : o.kannada}
-                                </span>
-                            </div>
+                          <div className="animate-in fade-in zoom-in duration-300 flex flex-col items-center">
+                            <span className="text-[8px] sm:text-[10px] font-bold uppercase tracking-widest opacity-60">is</span>
+                            <span className={`text-xl sm:text-4xl font-black font-serif ${isCorrect ? 'text-white' : 'text-red-700'}`}>
+                              {puzzleMode === 'hi-kn' ? o.hindi : o.kannada}
+                            </span>
+                          </div>
                         )}
                       </button>
                     );
                   })}
                 </div>
                 {puzzleState.isSolved && (
-                    <div className="w-full animate-in zoom-in slide-in-from-bottom-2 duration-300 pt-2 pb-12">
-                        <button onClick={() => generatePuzzle()} className={`w-full py-4 text-white rounded-3xl font-black text-lg shadow-xl hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-3 ${puzzleMode === 'hi-kn' ? 'bg-indigo-600' : 'bg-fuchsia-600'}`}>Continue <ArrowRight size={20}/></button>
-                    </div>
+                  <div className="w-full animate-in zoom-in slide-in-from-bottom-2 duration-300 pt-2 pb-12">
+                    <button onClick={() => generatePuzzle()} className={`w-full py-4 text-white rounded-3xl font-black text-lg shadow-xl hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-3 ${puzzleMode === 'hi-kn' ? 'bg-indigo-600' : 'bg-fuchsia-600'}`}>Continue <ArrowRight size={20} /></button>
+                  </div>
                 )}
               </>
             )}
