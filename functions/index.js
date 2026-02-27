@@ -16,12 +16,21 @@ exports.geminiProxy = functions
       const fullGeminiUrl =
       `https://${geminiApiHost}${forwardPath}${forwardPath.includes("?") ? "&" : "?"}key=${geminiApiKey}`;
 
+      let requestData = "";
+      if (clientRequest.method !== "GET" && clientRequest.body) {
+        requestData = JSON.stringify(clientRequest.body);
+      }
+
       const options = {
         method: clientRequest.method,
         headers: {
           "Content-Type": "application/json",
         },
       };
+
+      if (requestData) {
+        options.headers["Content-Length"] = Buffer.byteLength(requestData);
+      }
 
       const proxyRequest = https.request(
           fullGeminiUrl,
@@ -42,7 +51,8 @@ exports.geminiProxy = functions
         clientResponse.status(500).send(`Proxy error: ${error.message}`);
       });
 
-      clientRequest.pipe(proxyRequest, {
-        end: true,
-      });
+      if (requestData) {
+        proxyRequest.write(requestData);
+      }
+      proxyRequest.end();
     });
