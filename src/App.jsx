@@ -107,7 +107,7 @@ const callGeminiAudio = async (kannadaChar, retryCount = 0) => {
     }
   };
   try {
-    const response = await fetch(getGeminiUrl('models/gemini-2.5-flash-tts:generateContent'), {
+    const response = await fetch(getGeminiUrl('models/gemini-2.5-flash-preview-tts:generateContent'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
