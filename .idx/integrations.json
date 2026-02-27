@@ -1,3 +1,11 @@
 {
-  "firebase_hosting": {}
+  "firebase_hosting": {
+    "rewrites": [
+      {
+        "source": "/api/**",
+        "function": "geminiProxy"
+      }
+    ]
+  },
+  "__firebase_ai_proxy": "/api/"
 }
