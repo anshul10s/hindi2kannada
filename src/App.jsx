@@ -86,15 +86,26 @@ const firebaseConfig = JSON.parse(firebaseConfigRaw);
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
 let app, auth, db;
-if (firebaseConfig && firebaseConfig.apiKey) {
-  try {
-    app = initializeApp(firebaseConfig);
-    auth = getAuth(app);
-    db = getFirestore(app);
-  } catch (e) {
-    console.error("Firebase failed to initialize:", e);
+const initializeFirebaseApp = async () => {
+  if (firebaseConfig && firebaseConfig.apiKey) {
+    try {
+      app = initializeApp(firebaseConfig);
+      auth = getAuth(app);
+      db = getFirestore(app);
+
+      if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+        const { connectAuthEmulator } = await import('firebase/auth');
+        const { connectFirestoreEmulator } = await import('firebase/firestore');
+        connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+        connectFirestoreEmulator(db, '127.0.0.1', 8080);
+        console.log('Connected to local Firebase emulators');
+      }
+    } catch (e) {
+      console.error("Firebase failed to initialize:", e);
+    }
   }
-}
+};
+initializeFirebaseApp();
 
 const callGeminiAudio = async (kannadaChar, retryCount = 0) => {
   const payload = {
