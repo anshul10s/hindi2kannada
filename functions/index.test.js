@@ -31,6 +31,7 @@ describe("geminiProxy Caching functionality", () => {
       method: "POST",
       originalUrl: "/test-endpoint?useCache=true",
       body: {test: "data"},
+      headers: {origin: "http://localhost:5173"},
     };
     res = {
       set: jest.fn(),
@@ -38,6 +39,8 @@ describe("geminiProxy Caching functionality", () => {
       send: jest.fn(),
       writeHead: jest.fn(),
       end: jest.fn(),
+      setHeader: jest.fn(),
+      getHeader: jest.fn(),
     };
     nock.cleanAll();
   });
@@ -129,6 +132,7 @@ describe("geminiProxy Caching functionality", () => {
       method: "POST",
       originalUrl: "/test-endpoint",
       body: {stream: true},
+      headers: {origin: "http://localhost:5173"},
     };
 
     // Mock the external Gemini API response
