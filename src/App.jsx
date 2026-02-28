@@ -23,10 +23,6 @@ const getGeminiUrl = (endpointPath, useCache = false) => {
   const cleanPath = endpointPath.startsWith('/') ? endpointPath.slice(1) : endpointPath;
   const cacheQuery = useCache ? 'useCache=true' : '';
 
-  if (apiKey) {
-    return `https://generativelanguage.googleapis.com/v1beta/${cleanPath}?key=${apiKey}`;
-  }
-
   if (proxyUrl) {
     const base = proxyUrl.endsWith('/') ? proxyUrl.slice(0, -1) : proxyUrl;
     const hasQuery = cleanPath.includes('?');
