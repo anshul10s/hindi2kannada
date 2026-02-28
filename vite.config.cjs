@@ -4,6 +4,9 @@ module.exports = defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
     base: '/',
+    define: {
+      __firebase_ai_proxy: command === 'serve' ? JSON.stringify('http://127.0.0.1:5001/kannada-setu/us-central1/geminiProxy') : 'undefined'
+    },
     server: {
       proxy: {
         '/api': {
