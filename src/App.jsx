@@ -91,13 +91,6 @@ if (firebaseConfig && firebaseConfig.apiKey) {
     app = initializeApp(firebaseConfig);
     auth = getAuth(app);
     db = getFirestore(app);
-
-    // Connect to local emulators if running on localhost
-    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-      connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
-      connectFirestoreEmulator(db, '127.0.0.1', 8080);
-      console.log('Connected to local Firebase emulators');
-    }
   } catch (e) {
     console.error("Firebase failed to initialize:", e);
   }
