@@ -7,7 +7,7 @@ React project to create a webapp for learning kannada from hindi
 To run this project, especially the local backend emulators, you need the following system-level dependencies installed:
 
 *   **Node.js**: (v18 or v20 recommended) to run the frontend Vite server and Firebase Cloud Functions.
-*   **Java Runtime Environment (JRE)**: (v11 or higher) **Required exclusively for Firebase.** The Firebase emulator suite requires Java to run its local Firestore database instance. If you run `firebase emulators:start` without Java installed, you will encounter a `Could not spawn java -version` error.
+*   **Java Runtime Environment (JRE)**: (v21 or higher) **Required exclusively for Firebase.** The Firebase emulator suite requires Java to run its local Firestore database instance. If you run `firebase emulators:start` without Java installed, you will encounter a `Could not spawn java -version` error. Alternatively, use the `.devcontainer` to automate this.
 
 ## Development Server with Local Firebase Backend
 

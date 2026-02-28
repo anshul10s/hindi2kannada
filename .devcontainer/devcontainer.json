@@ -3,7 +3,7 @@
     "image": "mcr.microsoft.com/devcontainers/javascript-node:20",
     "features": {
         "ghcr.io/devcontainers/features/java:1": {
-            "version": "17",
+            "version": "21",
             "jdkType": "default"
         }
     },
