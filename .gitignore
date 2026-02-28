@@ -4,4 +4,4 @@ dist/
 /.DS_Store
 .firebase/hosting*
 .env.local
-firebase-debug.log
+*.log

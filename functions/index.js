@@ -1,58 +1,134 @@
+/* eslint-disable max-len */
 const functions = require("firebase-functions");
 const https = require("https");
+const admin = require("firebase-admin");
+const crypto = require("crypto");
+const cors = require("cors")({origin: true});
+
+if (admin.apps.length === 0) {
+  admin.initializeApp();
+}
 
 exports.geminiProxy = functions
     .runWith({secrets: ["GEMINI_API_KEY"]})
     .https.onRequest((clientRequest, clientResponse) => {
-      if (!process.env.GEMINI_API_KEY) {
-        functions.logger.error("GEMINI_API_KEY secret not set.");
-        clientResponse.status(500).send("API key not configured.");
-        return;
-      }
+      cors(clientRequest, clientResponse, async () => {
+        if (!process.env.GEMINI_API_KEY) {
+          functions.logger.error("GEMINI_API_KEY secret not set.");
+          clientResponse.status(500).send("API key not configured.");
+          return;
+        }
 
-      const geminiApiKey = process.env.GEMINI_API_KEY;
-      const geminiApiHost = "generativelanguage.googleapis.com";
-      const forwardPath = clientRequest.originalUrl.replace(/^\/api/, "");
-      const fullGeminiUrl =
-      `https://${geminiApiHost}${forwardPath}${forwardPath.includes("?") ? "&" : "?"}key=${geminiApiKey}`;
+        const db = admin.firestore();
+        const geminiApiKey = process.env.GEMINI_API_KEY;
+        const geminiApiHost = "generativelanguage.googleapis.com";
+        let forwardPath = clientRequest.originalUrl.replace(/^\/api/, "");
 
-      let requestData = "";
-      if (clientRequest.method !== "GET" && clientRequest.body) {
-        requestData = JSON.stringify(clientRequest.body);
-      }
+        const useCache = forwardPath.includes("useCache=true");
+        if (useCache) {
+          forwardPath = forwardPath.replace(/([?&])useCache=true(&|$)/, (match, p1, p2) => (p1 === "?" && p2 === "&" ? "?" : p2 === "&" ? "&" : ""));
+        }
 
-      const options = {
-        method: clientRequest.method,
-        headers: {
-          "Content-Type": "application/json",
-        },
-      };
+        const fullGeminiUrl =
+        `https://${geminiApiHost}${forwardPath}${forwardPath.includes("?") ? "&" : "?"}key=${geminiApiKey}`;
 
-      if (requestData) {
-        options.headers["Content-Length"] = Buffer.byteLength(requestData);
-      }
+        let requestData = "";
+        if (clientRequest.method !== "GET" && clientRequest.body) {
+          if (typeof clientRequest.body === "string") {
+            requestData = clientRequest.body;
+          } else if (Buffer.isBuffer(clientRequest.body)) {
+            requestData = clientRequest.body.toString("utf8");
+          } else {
+            requestData = JSON.stringify(clientRequest.body);
+          }
+        }
 
-      const proxyRequest = https.request(
-          fullGeminiUrl,
-          options,
-          (geminiResponse) => {
-            clientResponse.writeHead(
-                geminiResponse.statusCode,
-                geminiResponse.headers,
-            );
-            geminiResponse.pipe(clientResponse, {
-              end: true,
-            });
+        let cacheKey = null;
+        let cacheDocRef = null;
+
+        if (useCache && clientRequest.method === "POST") {
+          try {
+            const hash = crypto.createHash("sha256");
+            hash.update(forwardPath.split("?")[0]); // Use path without query params
+            hash.update(requestData);
+            cacheKey = hash.digest("hex");
+            cacheDocRef = db.collection("gemini_cache").doc(cacheKey);
+
+            const cacheDoc = await cacheDocRef.get();
+            if (cacheDoc.exists) {
+              functions.logger.info(`Serving from cache: ${cacheKey}`);
+              const cachedData = cacheDoc.data();
+              clientResponse.writeHead(cachedData.statusCode || 200, cachedData.headers || {"Content-Type": "application/json"});
+              clientResponse.end(cachedData.body);
+              return;
+            }
+          } catch (error) {
+            functions.logger.error("Error checking cache:", error);
+          }
+        }
+
+        const parsedUrl = new URL(fullGeminiUrl);
+        const options = {
+          hostname: parsedUrl.hostname,
+          port: 443,
+          path: parsedUrl.pathname + parsedUrl.search,
+          method: clientRequest.method,
+          headers: {
+            "Content-Type": "application/json",
           },
-      );
+        };
 
-      proxyRequest.on("error", (error) => {
-        functions.logger.error("Proxy request error:", error);
-        clientResponse.status(500).send(`Proxy error: ${error.message}`);
+        if (requestData) {
+          options.headers["Content-Length"] = Buffer.byteLength(requestData);
+        }
+
+        const proxyRequest = https.request(options, (geminiResponse) => {
+          if (!useCache) {
+            clientResponse.writeHead(geminiResponse.statusCode, geminiResponse.headers);
+            geminiResponse.pipe(clientResponse, {end: true});
+            return;
+          }
+
+          let responseBody = "";
+          geminiResponse.on("data", (chunk) => {
+            responseBody += chunk;
+          });
+
+          geminiResponse.on("end", async () => {
+            const responseHeaders = {...geminiResponse.headers};
+
+            if (responseHeaders["transfer-encoding"]) {
+              delete responseHeaders["transfer-encoding"];
+            }
+            responseHeaders["content-length"] = Buffer.byteLength(responseBody);
+
+            clientResponse.writeHead(geminiResponse.statusCode, responseHeaders);
+            clientResponse.end(responseBody);
+
+            if (geminiResponse.statusCode === 200 && cacheDocRef) {
+              try {
+                await cacheDocRef.set({
+                  statusCode: geminiResponse.statusCode,
+                  headers: responseHeaders,
+                  body: responseBody,
+                  createdAt: Date.now(),
+                });
+                functions.logger.info(`Saved to cache: ${cacheKey}`);
+              } catch (error) {
+                functions.logger.error("Error saving to cache:", error);
+              }
+            }
+          });
+        });
+
+        proxyRequest.on("error", (error) => {
+          functions.logger.error("Proxy request error:", error);
+          clientResponse.status(500).send(`Proxy error: ${error.message}`);
+        });
+
+        if (requestData) {
+          proxyRequest.write(requestData);
+        }
+        proxyRequest.end();
       });
-
-      if (requestData) {
-        proxyRequest.write(requestData);
-      }
-      proxyRequest.end();
     });

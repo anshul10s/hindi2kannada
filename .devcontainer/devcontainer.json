@@ -1,0 +1,43 @@
+{
+    "name": "Node.js & Firebase App",
+    "image": "mcr.microsoft.com/devcontainers/javascript-node:20",
+    "features": {
+        "ghcr.io/devcontainers/features/java:1": {
+            "version": "21",
+            "jdkType": "default"
+        }
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "dbaeumer.vscode-eslint",
+                "esbenp.prettier-vscode"
+            ],
+            "settings": {
+                "editor.formatOnSave": true
+            }
+        }
+    },
+    "forwardPorts": [
+        5173,
+        5001,
+        8080,
+        4400,
+        4000
+    ],
+    "portsAttributes": {
+        "5173": {
+            "label": "Vite React App",
+            "onAutoForward": "notify"
+        },
+        "4000": {
+            "label": "Firebase Emulator UI",
+            "onAutoForward": "notify"
+        },
+        "5001": {
+            "label": "Firebase Functions API",
+            "onAutoForward": "ignore"
+        }
+    },
+    "postCreateCommand": "npm install -g firebase-tools && npm install && cd functions && npm install"
+}

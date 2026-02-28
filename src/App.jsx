@@ -19,16 +19,14 @@ const proxyUrl = typeof __firebase_ai_proxy !== 'undefined' ? __firebase_ai_prox
 /**
  * Helper to construct the API URL. 
  */
-const getGeminiUrl = (endpointPath) => {
+const getGeminiUrl = (endpointPath, useCache = false) => {
   const cleanPath = endpointPath.startsWith('/') ? endpointPath.slice(1) : endpointPath;
-
-  if (apiKey) {
-    return `https://generativelanguage.googleapis.com/v1beta/${cleanPath}?key=${apiKey}`;
-  }
+  const cacheQuery = useCache ? 'useCache=true' : '';
 
   if (proxyUrl) {
     const base = proxyUrl.endsWith('/') ? proxyUrl.slice(0, -1) : proxyUrl;
-    return `${base}/v1beta/${cleanPath}`;
+    const hasQuery = cleanPath.includes('?');
+    return `${base}/v1beta/${cleanPath}${useCache ? (hasQuery ? '&' : '?') + cacheQuery : ''}`;
   }
 
   return `https://generativelanguage.googleapis.com/v1beta/${cleanPath}?key=${apiKey}`;
@@ -128,7 +126,7 @@ const callGeminiAudio = async (kannadaChar, retryCount = 0) => {
 const callGeminiUsage = async (charData) => {
   const prompt = `Simple Kannada sentence using '${charData.kannada}'. Output JSON: { "sentence": "string (Kannada Script)", "hindi_script_representation": "string (Phonetic sound in Hindi script)", "hindi_translation": "string (Actual meaning in Hindi)" }`;
   const data = await fetchWithRetry(
-    getGeminiUrl('models/gemini-2.5-flash:generateContent'),
+    getGeminiUrl('models/gemini-2.5-flash:generateContent', true),
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -141,7 +139,7 @@ const callGeminiUsage = async (charData) => {
 const callGeminiTutor = async (charData) => {
   const prompt = `2 words for kids starting with Kannada character '${charData.kannada}'. Output JSON format: { "mnemonic": "string (Hindi)", "words": [{ "kannada": "string", "hindi_sound": "string (PHONETIC sound only in Hindi script)", "hindi_meaning": "string (Actual translation in Hindi)" }] }`;
   const data = await fetchWithRetry(
-    getGeminiUrl('models/gemini-2.5-flash:generateContent'),
+    getGeminiUrl('models/gemini-2.5-flash:generateContent', true),
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -23,6 +23,12 @@ module.exports = {
       },
       rules: {},
     },
+    {
+      files: ["**/*.test.js"],
+      env: {
+        jest: true,
+      },
+    },
   ],
   globals: {},
 };
