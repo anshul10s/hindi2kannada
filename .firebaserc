@@ -1,5 +1,17 @@
 {
   "projects": {
     "default": "kannada-setu"
+  },
+  "targets": {
+    "kannada-setu": {
+      "hosting": {
+        "kannada-setu": [
+          "kannada-setu"
+        ],
+        "akshar-setu": [
+          "akshar-setu"
+        ]
+      }
+    }
   }
 }
