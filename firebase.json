@@ -20,7 +20,7 @@
       ]
     },
     {
-      "target": "akshar-setu",
+      "target": "akshara-setu",
       "public": "dist",
       "ignore": [
         "firebase.json",
