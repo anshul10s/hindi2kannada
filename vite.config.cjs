@@ -6,7 +6,7 @@ module.exports = defineConfig(({ command, mode }) => {
     base: '/',
     define: {
       __firebase_ai_proxy: command === 'serve' ? JSON.stringify('http://127.0.0.1:5001/kannada-setu/us-central1/geminiProxy') : JSON.stringify('/api'),
-      __firebase_config: env.VITE_FIREBASE_CONFIG ? JSON.stringify(env.VITE_FIREBASE_CONFIG) : 'undefined',
+      __firebase_config: env.VITE_FIREBASE_CONFIG ? `'${env.VITE_FIREBASE_CONFIG}'` : "'{}'",
       __app_id: env.VITE_FIREBASE_APP_ID ? JSON.stringify(env.VITE_FIREBASE_APP_ID) : JSON.stringify('default-app-id'),
     },
     server: {
