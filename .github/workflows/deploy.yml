@@ -1,46 +1,36 @@
-name: Deploy to GitHub Pages
+name: Deploy to Firebase
 
 on:
   push:
     branches: [ main ]
-
-permissions:
-  contents: write
-  pages: write
-  id-token: write
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     env:
       VITE_FIREBASE_CONFIG: ${{ secrets.VITE_FIREBASE_CONFIG }}
-      VITE_GEMINI_API_KEY: ${{ secrets.VITE_GEMINI_API_KEY }}
+      VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          # Ensure full history so the gh-pages action can create a proper commit
-          fetch-depth: 0
-          # Keep credentials so downstream actions can push
-          persist-credentials: true
 
-      - name: Use Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
 
-      - name: Install dependencies
+      - name: Install dependencies (frontend)
         run: npm ci
 
-      - name: Build
+      - name: Build frontend
         run: npm run build
 
-      - name: Configure git for Actions
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Install dependencies (functions)
+        run: npm ci
+        working-directory: ./functions
 
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./dist
+      - name: Deploy to Firebase
+        # You must add FIREBASE_TOKEN as a repository secret
+        # Get one by running `npx firebase login:ci` locally
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: npx firebase-tools deploy --only hosting,functions --non-interactive
