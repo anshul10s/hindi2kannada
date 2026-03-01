@@ -510,7 +510,7 @@ export default function App() {
       <header className={`sticky top-0 z-30 shadow-sm px-4 h-16 flex items-center justify-between flex-none border-b ${theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
         <div className="flex items-center gap-2">
           {view !== 'home' && <button onClick={() => navigate({ view: view === 'list' ? 'home' : 'list', category: view === 'list' ? null : category, selectedChar: null })} className="p-2 hover:bg-slate-700/50 rounded-full transition-colors"><ChevronLeft size={24} /></button>}
-          <h1 className="text-lg sm:text-xl font-bold bg-gradient-to-r from-indigo-500 to-violet-400 bg-clip-text text-transparent">Akshara Setu</h1>
+          <h1 className="text-lg sm:text-xl font-bold bg-gradient-to-r from-indigo-500 to-violet-400 bg-clip-text text-transparent">Learn Kannada from Hindi</h1>
         </div>
         <div className="flex items-center gap-1 sm:gap-2">
           <button onClick={() => setShowFrequentOnly(!showFrequentOnly)} className={`p-2 rounded-full transition-all ${showFrequentOnly ? 'bg-amber-500 text-white shadow-lg scale-110' : 'text-slate-400 hover:bg-slate-700/30'}`}>
