@@ -359,6 +359,33 @@ export default function App() {
   const prevCharData = currentIndex > 0 ? currentList[currentIndex - 1] : null;
   const nextCharData = currentIndex < currentList.length - 1 ? currentList[currentIndex + 1] : null;
 
+  // Browser History Navigation 
+  const navigate = (newState) => {
+    // Only push if state actually changes to avoid duplicate history entries
+    if (newState.view !== view || newState.category !== category || newState.selectedChar?.id !== selectedChar?.id) {
+      window.history.pushState(newState, '', '');
+      setView(newState.view);
+      setCategory(newState.category);
+      setSelectedChar(newState.selectedChar || null);
+    }
+  };
+
+  useEffect(() => {
+    // Set initial state so the first "Back" button click has a destination
+    window.history.replaceState({ view, category, selectedChar }, '', '');
+
+    const handlePopState = (event) => {
+      if (event.state) {
+        setView(event.state.view);
+        setCategory(event.state.category);
+        setSelectedChar(event.state.selectedChar);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
   // Firebase Initialization & Auth
   useEffect(() => {
     const initAuth = async () => {
@@ -403,7 +430,7 @@ export default function App() {
     if (activeFeature && resultRef.current) resultRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [activeFeature, aiData]);
 
-  const handleCharSelect = (char) => { setSelectedChar(char); setAiData({}); setActiveFeature(null); setError(null); setView('practice'); };
+  const handleCharSelect = (char) => { setAiData({}); setActiveFeature(null); setError(null); navigate({ view: 'practice', category, selectedChar: char }); };
 
   const getGroupedChars = () => {
     const groups = {};
@@ -446,7 +473,7 @@ export default function App() {
     setPuzzleMode(mode);
     const pool = charData.filter(c => !showFrequentOnly || c.isFrequent);
     const shuffled = [...pool].sort(() => Math.random() - 0.5);
-    setPuzzleQueue(shuffled); generatePuzzle(shuffled, mode); setView('puzzle');
+    setPuzzleQueue(shuffled); generatePuzzle(shuffled, mode); navigate({ view: 'puzzle', category: null, selectedChar: null });
   };
 
   const generatePuzzle = (currentQueue = puzzleQueue, mode = puzzleMode) => {
@@ -482,7 +509,7 @@ export default function App() {
     <div className={`min-h-screen font-sans transition-colors duration-300 flex flex-col ${theme === 'dark' ? 'bg-slate-900 text-slate-100' : 'bg-slate-50 text-slate-800'}`}>
       <header className={`sticky top-0 z-30 shadow-sm px-4 h-16 flex items-center justify-between flex-none border-b ${theme === 'dark' ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
         <div className="flex items-center gap-2">
-          {view !== 'home' && <button onClick={() => setView(view === 'list' ? 'home' : 'list')} className="p-2 hover:bg-slate-700/50 rounded-full transition-colors"><ChevronLeft size={24} /></button>}
+          {view !== 'home' && <button onClick={() => navigate({ view: view === 'list' ? 'home' : 'list', category: view === 'list' ? null : category, selectedChar: null })} className="p-2 hover:bg-slate-700/50 rounded-full transition-colors"><ChevronLeft size={24} /></button>}
           <h1 className="text-lg sm:text-xl font-bold bg-gradient-to-r from-indigo-500 to-violet-400 bg-clip-text text-transparent">Akshara Setu</h1>
         </div>
         <div className="flex items-center gap-1 sm:gap-2">
@@ -492,7 +519,7 @@ export default function App() {
           <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} className="p-2 rounded-full hover:bg-slate-700/30 transition-colors">
             {theme === 'dark' ? <Sun size={20} className="text-amber-400" /> : <Moon size={20} className="text-slate-400" />}
           </button>
-          <button onClick={() => { setView('home'); setCategory(null); setSelectedChar(null); }} className="p-2 text-slate-400 hover:text-indigo-500 transition-colors"><Home size={24} /></button>
+          <button onClick={() => navigate({ view: 'home', category: null, selectedChar: null })} className="p-2 text-slate-400 hover:text-indigo-500 transition-colors"><Home size={24} /></button>
         </div>
       </header>
 
@@ -512,19 +539,19 @@ export default function App() {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-              <button onClick={() => { setCategory('vowel'); setView('list'); }} className={`p-5 sm:p-8 rounded-3xl border-2 text-left relative overflow-hidden group transition-all h-32 sm:h-44 shadow-lg ${theme === 'dark' ? 'bg-slate-800 border-slate-700 hover:border-indigo-500' : 'bg-white border-slate-100 hover:border-indigo-400'}`}>
+              <button onClick={() => navigate({ view: 'list', category: 'vowel', selectedChar: null })} className={`p-5 sm:p-8 rounded-3xl border-2 text-left relative overflow-hidden group transition-all h-32 sm:h-44 shadow-lg ${theme === 'dark' ? 'bg-slate-800 border-slate-700 hover:border-indigo-500' : 'bg-white border-slate-100 hover:border-indigo-400'}`}>
                 <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center mb-2 sm:mb-4 ${theme === 'dark' ? 'bg-indigo-900/30 text-indigo-400' : 'bg-indigo-100 text-indigo-600'}`}><BookOpen size={24} /></div>
                 <h3 className="text-lg sm:text-xl font-bold">Vowels</h3>
                 <p className="text-[10px] sm:text-xs text-slate-500">ಅ - ಅಃ ({charData.filter(c => c.type === 'vowel' && (!showFrequentOnly || c.isFrequent)).length})</p>
                 <span className={`absolute bottom-1 right-2 text-6xl sm:text-8xl opacity-5 font-serif select-none transition-transform group-hover:scale-110 pointer-events-none ${theme === 'dark' ? 'text-slate-200' : 'text-slate-900'}`}>ಅ</span>
               </button>
-              <button onClick={() => { setCategory('consonant'); setView('list'); }} className={`p-5 sm:p-8 rounded-3xl border-2 text-left relative overflow-hidden group transition-all h-32 sm:h-44 shadow-lg ${theme === 'dark' ? 'bg-slate-800 border-slate-700 hover:border-orange-500' : 'bg-white border-slate-100 hover:border-orange-400'}`}>
+              <button onClick={() => navigate({ view: 'list', category: 'consonant', selectedChar: null })} className={`p-5 sm:p-8 rounded-3xl border-2 text-left relative overflow-hidden group transition-all h-32 sm:h-44 shadow-lg ${theme === 'dark' ? 'bg-slate-800 border-slate-700 hover:border-orange-500' : 'bg-white border-slate-100 hover:border-orange-400'}`}>
                 <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center mb-2 sm:mb-4 ${theme === 'dark' ? 'bg-orange-900/30 text-orange-400' : 'bg-orange-100 text-orange-600'}`}><PenTool size={24} /></div>
                 <h3 className="text-lg sm:text-xl font-bold">Consonants</h3>
                 <p className="text-[10px] sm:text-xs text-slate-500">ಕ - ಳ ({charData.filter(c => c.type === 'consonant' && (!showFrequentOnly || c.isFrequent)).length})</p>
                 <span className={`absolute bottom-1 right-2 text-6xl sm:text-8xl opacity-5 font-serif select-none transition-transform group-hover:scale-110 pointer-events-none ${theme === 'dark' ? 'text-slate-200' : 'text-slate-900'}`}>ಕ</span>
               </button>
-              <button onClick={() => { setCategory('numeral'); setView('list'); }} className={`p-5 sm:p-8 rounded-3xl border-2 text-left relative overflow-hidden group transition-all h-32 sm:h-44 shadow-lg ${theme === 'dark' ? 'bg-slate-800 border-slate-700 hover:border-green-500' : 'bg-white border-slate-100 hover:border-green-400'}`}>
+              <button onClick={() => navigate({ view: 'list', category: 'numeral', selectedChar: null })} className={`p-5 sm:p-8 rounded-3xl border-2 text-left relative overflow-hidden group transition-all h-32 sm:h-44 shadow-lg ${theme === 'dark' ? 'bg-slate-800 border-slate-700 hover:border-green-500' : 'bg-white border-slate-100 hover:border-green-400'}`}>
                 <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center mb-2 sm:mb-4 ${theme === 'dark' ? 'bg-green-900/30 text-green-400' : 'bg-green-100 text-green-600'}`}><Hash size={24} /></div>
                 <h3 className="text-lg sm:text-xl font-bold">Numerals</h3>
                 <p className="text-[10px] sm:text-xs text-slate-500">೦ - ೯ ({charData.filter(c => c.type === 'numeral' && (!showFrequentOnly || c.isFrequent)).length})</p>
