@@ -96,31 +96,27 @@ if (firebaseConfig && firebaseConfig.apiKey) {
   }
 }
 
-const callGeminiAudio = async (kannadaChar, retryCount = 0) => {
+const callGeminiAudio = async (kannadaChar) => {
   const payload = {
-    contents: [{ parts: [{ text: kannadaChar }] }],
+    contents: [{ parts: [{ text: `Please pronounce the following Kannada character clearly: ${kannadaChar}` }] }],
     generationConfig: {
       responseModalities: ["AUDIO"],
       speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Kore" } } }
     }
   };
-  try {
-    const response = await fetch(getGeminiUrl('models/gemini-2.5-flash-preview-tts:generateContent'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    const result = await response.json();
-    const part = result?.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-    if (part?.inlineData?.data) {
-      const pcm16 = new Int16Array(base64ToArrayBuffer(part.inlineData.data));
-      return URL.createObjectURL(pcmToWav(pcm16, 24000));
-    }
-    throw new Error("No audio");
-  } catch (error) {
-    if (retryCount < 2) return callGeminiAudio(kannadaChar, retryCount + 1);
-    throw error;
+  const response = await fetch(getGeminiUrl('models/gemini-2.5-flash-preview-tts:generateContent', true), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const result = await response.json();
+  if (result.error) throw new Error(result.error.message || "TTS API Error");
+  const part = result?.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+  if (part?.inlineData?.data) {
+    const pcm16 = new Int16Array(base64ToArrayBuffer(part.inlineData.data));
+    return URL.createObjectURL(pcmToWav(pcm16, 24000));
   }
+  throw new Error("No audio data in response");
 };
 
 const callGeminiUsage = async (charData) => {
@@ -447,12 +443,20 @@ export default function App() {
   };
 
   const handlePlayAudio = async (text) => {
-    if (audioCache[selectedChar.id]) { new Audio(audioCache[selectedChar.id]).play(); return; }
+    if (audioCache[text]) {
+      new Audio(audioCache[text]).play();
+      return;
+    }
+    setError(null);
     setIsAudioLoading(true);
     try {
-      const url = await callGeminiAudio(text); setAudioCache(p => ({ ...p, [selectedChar.id]: url }));
+      const url = await callGeminiAudio(text);
+      setAudioCache(prev => ({ ...prev, [text]: url }));
       new Audio(url).play();
-    } catch { setError("Audio failed."); } finally { setIsAudioLoading(false); }
+    } catch (e) {
+      console.error("Audio playback error:", e);
+      setError(`Audio failed: ${e.message}`);
+    } finally { setIsAudioLoading(false); }
   };
 
   const run = async (feat, fn) => {
