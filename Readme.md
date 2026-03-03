@@ -15,7 +15,7 @@ To run the application locally while testing the Firebase Cloud Function proxy f
 
 1. **Start the Firebase emulators (in one terminal window):**
    ```bash
-   firebase emulators:start --only functions,firestore
+   npx firebase emulators:start
    ```
    This will spin up both the local Gemini API proxy function at `http://127.0.0.1:5001/kannada-setu/us-central1/geminiProxy` and the local Firestore database which the proxy relies on to cache results.
 
